@@ -4,6 +4,7 @@ import socket
 import time
 import threading
 import pyautogui
+from datetime import datetime
 
 def auto_input(stop_event, interval=40):
     print("Auto input active")
@@ -13,7 +14,7 @@ def auto_input(stop_event, interval=40):
         stop_event.wait(interval)
     print("Auto input stopped")
 
-def capture_udp_auto(port=20777, savefile="udp_dump.bin", idle_stop_seconds=5):
+def capture_udp_auto(port=20777, idle_stop_seconds=5):
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.bind(("127.0.0.1", port))
     udp_socket.settimeout(1.0)
@@ -25,6 +26,8 @@ def capture_udp_auto(port=20777, savefile="udp_dump.bin", idle_stop_seconds=5):
     packets = 0
     stop_event = threading.Event()
     auto_input_thread = None
+    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    savefile = f"udp_dump_{time}.bin"
 
     with open(savefile, "wb") as f:
         while True:
