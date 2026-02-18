@@ -5,6 +5,7 @@ import time
 import threading
 import pyautogui
 from datetime import datetime
+import os
 
 def auto_input(stop_event, interval=40):
     print("Auto input active")
@@ -26,8 +27,10 @@ def capture_udp_auto(port=20777, idle_stop_seconds=5):
     packets = 0
     stop_event = threading.Event()
     auto_input_thread = None
-    time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    savefile = f"udp_dump_{time}.bin"
+    file_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(os.path.join(BASE_DIR, "captures"), exist_ok=True)
+    savefile = os.path.join(BASE_DIR, "captures", f"udp_dump_{file_time}.bin")
 
     with open(savefile, "wb") as f:
         while True:
