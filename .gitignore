@@ -208,3 +208,6 @@ __marimo__/
 
 # F1 Tracker UDP captures
 captures/
+
+# F1 Data from ouside sources
+data/

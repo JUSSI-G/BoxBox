@@ -18,7 +18,7 @@ speed_lock = threading.Lock()
 def parse_speed(data, player_index):
     h_format = "<HBBBBBQfIIBB"
     h_size = struct.calcsize(h_format)
-    ct_format = "<HfffBbHBBHH4H4B4BH4f4B"
+    ct_format = "<HfffBbHBBH4H4B4BH4f4B"
     ct_size = struct.calcsize(ct_format)
     offset = h_size + player_index * ct_size
     if len(data) < offset + 2:

@@ -450,7 +450,7 @@ def export_csv(records, filepath):
     if not records:
         print("No lap records to export.")
         return
-    with open(filepath, "w", newline="") as f:
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(records[0].keys()))
         writer.writeheader()
         writer.writerows(records)
