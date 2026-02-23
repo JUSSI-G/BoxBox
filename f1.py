@@ -115,8 +115,8 @@ def parse_lap_data(packet):
         result[i] = {
             "last_lap_ms":        d[0],
             "current_lap_ms":     d[1],
-            "sector1_ms":         d[2] + d[3] * 60_000,
-            "sector2_ms":         d[4] + d[5] * 60_000,
+            "sector1_ms":         d[2] + d[3],
+            "sector2_ms":         d[4] + d[5],
             "lap_distance":       d[10],
             "position":           d[13],
             "current_lap":        d[14],
@@ -262,7 +262,7 @@ def parse_car_status(packet):
 #   uint8  m_engineSeized
 # };
 
-damage_FMT = "<4f4B4B4BBBBBBBBBBBBBBBBB"
+damage_FMT = "<4f4B4B4BBBBBBBBBBBBBBBBBB"
 
 def parse_car_damage(packet):
     result = {}
@@ -387,53 +387,51 @@ def process_dump(filepath, min_lap_s=30, max_lap_s=600):
             all_laps = parse_lap_data(packet)
 
             for car_idx, lap_data in all_laps.items():
-                # Only skip truly inactive cars; keep active (2) and finished (3)
-                if lap_data["result_status"] == 1:
-                    continue
-                if lap_data["current_lap"] == 0:
+                # 1. Skip inactive cars
+                if lap_data["result_status"] <= 1 or lap_data["current_lap"] == 0:
                     continue
 
                 current_lap = lap_data["current_lap"]
                 last_lap    = last_lap_per_car.get(car_idx)
 
-                if last_lap is not None and current_lap != last_lap and last_lap > 0:
+                # 2. Check for Lap Crossing (The "Aha!" moment)
+                if last_lap is not None and current_lap > last_lap:
+                    # We grab 'prev' which STILL holds the data from the very last
+                    # frame of the previous lap (including those juicy sector times).
+                    prev  = prev_lap_snapshot.get(car_idx, lap_data)
                     lap_s = lap_data["last_lap_ms"] / 1000
-                    if lap_s < min_lap_s or lap_s > max_lap_s:
-                        prev_lap_snapshot[car_idx] = lap_data
-                        last_lap_per_car[car_idx] = current_lap
-                        continue
+                    if min_lap_s <= lap_s <= max_lap_s:
+                        info = participants.get(car_idx, {})
+                        record = {
+                            "car_idx":      car_idx,
+                            "is_player":    car_idx == player_idx,
+                            "ai_controlled":info.get("ai_controlled", True),
+                            "driver_name":  info.get("driver_name", f"Car {car_idx}"),
+                            "team":         info.get("team", "Unknown"),
+                            "race_number":  info.get("race_number", 0),
+                            "lap":          last_lap,
+                            "lap_time_s":   round(lap_data["last_lap_ms"] / 1000, 3),
+                            "lap_time_ms":  lap_data["last_lap_ms"],
+                            "sector1_ms":   prev["sector1_ms"],  # From the snapshot!
+                            "sector2_ms":   prev["sector2_ms"],  # From the snapshot!
+                            "sector3_ms":   lap_data["last_lap_ms"] - (prev["sector1_ms"] + prev["sector2_ms"]),
+                            "position":     lap_data["position"],
+                            "num_pit_stops":    lap_data["num_pit_stops"],
+                            "pit_stop_time_ms": lap_data["pit_stop_time_ms"],
+                            "lap_invalid":      lap_data["lap_invalid"],
+                            "grid_position":    lap_data["grid_position"],
+                        }
+                        record.update(latest_telem.get(car_idx, {}))
+                        record.update(latest_status.get(car_idx, {}))
+                        record.update(latest_damage.get(car_idx, {}))
+                        record.pop("car_idx", None)  # already stored above
+                        record["car_idx"] = car_idx  # put it back at the front
 
-                    # Use the PREVIOUS lap snapshot for sector times —
-                    # they reset to 0 the moment a new lap begins
-                    prev = prev_lap_snapshot.get(car_idx, lap_data)
+                        lap_records[(car_idx, last_lap)] = record
 
-                    info = participants.get(car_idx, {})
-                    record = {
-                        "car_idx":      car_idx,
-                        "is_player":    car_idx == player_idx,
-                        "ai_controlled":info.get("ai_controlled", True),
-                        "driver_name":  info.get("driver_name", f"Car {car_idx}"),
-                        "team":         info.get("team", "Unknown"),
-                        "race_number":  info.get("race_number", 0),
-                        "lap":          last_lap,
-                        "lap_time_s":   round(lap_data["last_lap_ms"] / 1000, 3),
-                        "lap_time_ms":  lap_data["last_lap_ms"],
-                        "sector1_ms":   prev["sector1_ms"],
-                        "sector2_ms":   prev["sector2_ms"],
-                        "position":     lap_data["position"],
-                        "num_pit_stops":    lap_data["num_pit_stops"],
-                        "pit_stop_time_ms": lap_data["pit_stop_time_ms"],
-                        "lap_invalid":      lap_data["lap_invalid"],
-                        "grid_position":    lap_data["grid_position"],
-                    }
-                    record.update(latest_telem.get(car_idx, {}))
-                    record.update(latest_status.get(car_idx, {}))
-                    record.update(latest_damage.get(car_idx, {}))
-                    record.pop("car_idx", None)  # already stored above
-                    record["car_idx"] = car_idx  # put it back at the front
-
-                    lap_records[(car_idx, last_lap)] = record
-
+                # 3. CRITICAL: Update the snapshot AFTER the check
+                # This ensures the NEXT time this loop runs, it has this frame's data
+                prev_lap_snapshot[car_idx] = lap_data
                 last_lap_per_car[car_idx] = current_lap
 
     print(f"Processed {total_packets} total packets")
