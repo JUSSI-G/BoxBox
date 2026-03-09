@@ -342,16 +342,46 @@ def parse_participants(packet):
 
     return result
 
+# ── Packet 1 – Session Data ───────────────────────────────────────────────────
+# We only extract the fields useful for strategy analysis.
+# uint8  m_weather (0=clear,1=light cloud,2=overcast,3=light rain,4=rain,5=heavy rain,6=storm)
+# int8   m_trackTemperature
+# int8   m_airTemperature
+# uint8  m_totalLaps
+# uint16 m_trackLength
+# uint8  m_sessionType (0=unknown,1=P1,2=P2,3=P3,4=short P,5=Q1,6=Q2,7=Q3,8=short Q,9=OSQ,10=R,11=R2,12=R3,13=TT)
+# uint8  m_safetyCarStatus (0=none,1=full SC,2=virtual SC,3=formation lap)
+
+SESSION_FMT = "<BBBBBBBBHBBBBBBBBBBBBBBBBBHHBbbbBBBBHBBBBBBBBBBB"
+
+def parse_session(packet):
+    if len(packet) < h_size + struct.calcsize("<BBBBBBBBBBBBBBB"):
+        return {}
+    d = struct.unpack_from(SESSION_FMT, packet, h_size)
+    weather_map = {0:"Clear", 1:"Light Cloud", 2:"Overcast",
+                   3:"Light Rain", 4:"Rain", 5:"Heavy Rain", 6:"Storm"}
+    sc_map = {0:"None", 1:"Full SC", 2:"Virtual SC", 3:"Formation Lap"}
+    return {
+        "weather":         weather_map.get(d[0], "Unknown"),
+        "track_temp_c":    d[1],
+        "air_temp_c":      d[2],
+        "total_laps":      d[3],
+        "track_length_m":  d[8],
+        "safety_car":      sc_map.get(d[23], "Unknown"),
+    }
 
 def process_dump(filepath, min_lap_s=30, max_lap_s=600):
     # Rolling snapshots keyed by car_idx
-    latest_telem  = {}   # car_idx -> dict
+    latest_telem  = {} # car_idx -> dict
+    latest_session = {}  
     latest_status = {}
     latest_damage = {}
     participants  = {}   # car_idx -> {driver_name, team, ...}
 
     # car_idx -> last known lap number (to detect crossings per car)
     last_lap_per_car = {}
+    stint_per_car    = defaultdict(lambda: 1)   # car_idx -> current stint number
+    compound_per_car = {}                        # car_idx -> last seen compound
     prev_lap_snapshot = {}  # car_idx -> last lap_data before crossing
 
     # (car_idx, lap) -> completed record
@@ -369,6 +399,9 @@ def process_dump(filepath, min_lap_s=30, max_lap_s=600):
 
         if player_idx is None:
             player_idx = hdr["playerCarIndex"]
+
+        if pid == 1:
+            latest_session = parse_session(packet)
 
         # Participants — grab once, keep updating in case it changes
         if pid == 4:
@@ -421,7 +454,16 @@ def process_dump(filepath, min_lap_s=30, max_lap_s=600):
                             "lap_invalid":      lap_data["lap_invalid"],
                             "grid_position":    lap_data["grid_position"],
                         }
+                        # Detect stint change (new compound or tyre age reset to 0)
+                        current_compound = latest_status.get(car_idx, {}).get("actual_compound")
+                        current_age      = latest_status.get(car_idx, {}).get("tyres_age_laps", 1)
+                        prev_compound    = compound_per_car.get(car_idx)
+                        if prev_compound and (current_compound != prev_compound or current_age == 0):
+                            stint_per_car[car_idx] += 1
+                        compound_per_car[car_idx] = current_compound
+                        record["stint"] = stint_per_car[car_idx]
                         record.update(latest_telem.get(car_idx, {}))
+                        record.update(latest_session)
                         record.update(latest_status.get(car_idx, {}))
                         record.update(latest_damage.get(car_idx, {}))
                         record.pop("car_idx", None)  # already stored above
