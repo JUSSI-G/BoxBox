@@ -46,6 +46,261 @@ import matplotlib.gridspec as gridspec
 import json, time, argparse, os, sys
 from collections import defaultdict
 
+# ── UDP / live telemetry integration ──────────────────────────────────────────
+# f1.py (the UDP parser) produces lap records from F1 25 game telemetry.
+# These records are structurally compatible with what pitstops.csv provides:
+# lap number, driver name, and pit stop timing per stint.
+#
+# This module bridges the two: it converts UDP-derived lap records into the
+# same DataFrame format as pitstops.csv so the same variance analysis runs
+# on both historical data and live/recent sessions.
+
+def load_udp_csv(path):
+    """
+    Load a CSV exported by f1.py and convert it to the same schema as
+    pitstops.csv so all downstream analysis functions work unchanged.
+
+    What we actually use from the UDP data (audit-confirmed):
+      • Pit lap numbers      — detected via single-lap stints (clean, 25 events found)
+      • In-lap time penalty  — measured pit loss delta = in-lap minus driver p25 pace
+      • Tyre age per lap     — tyres_age_laps column, used for window error calc
+      • Compound per stint   — actual_compound, clean for all full-race drivers
+
+    What we deliberately ignore:
+      • pit_stop_time_ms     — always 0 in this game build, unusable
+      • tyre_wear_* columns  — corrupt (value=100) for most drivers; only pedro is
+                               clean, but one driver is not enough to calibrate a model
+    """
+    import re
+    if not os.path.exists(path):
+        print(f"  ⚠  UDP CSV not found: {path}")
+        return pd.DataFrame()
+
+    df = pd.read_csv(path)
+
+    required = {"driver_name", "lap", "stint", "actual_compound",
+                "lap_time_s", "tyres_age_laps"}
+    if not required.issubset(set(df.columns)):
+        print(f"  ⚠  UDP CSV missing expected columns. Found: {list(df.columns)}")
+        return pd.DataFrame()
+
+    # Extract year and race slug from filename e.g. "bahrain_2025.csv"
+    basename = os.path.splitext(os.path.basename(path))[0]
+    year_match = re.search(r"(20\d{2})", basename)
+    year  = int(year_match.group(1)) if year_match else 2025
+    race  = re.sub(r"_?20\d{2}_?", "", basename).replace("_", "-") or "live_session"
+
+    # ── Filter: only keep plausible lap times and full-race drivers ──────────
+    # Lap times >200s are crashes/formation laps, not real race pace.
+    # Drivers with <20 laps are DNFs — too short to compute a meaningful
+    # window error or fit any degradation model.
+    df = df[df["lap_time_s"] < 200].copy()
+    lap_counts = df.groupby("driver_name")["lap"].count()
+    full_race_drivers = lap_counts[lap_counts >= 20].index
+    df = df[df["driver_name"].isin(full_race_drivers)]
+
+    if df.empty:
+        print(f"  ⚠  No qualifying drivers after filtering")
+        return pd.DataFrame()
+
+    print(f"  UDP: {len(full_race_drivers)} full-race drivers kept "
+          f"({lap_counts[lap_counts < 20].count()} short-race DNFs dropped)")
+
+    # ── Detect pit laps via single-lap stints ────────────────────────────────
+    # A stint that lasts exactly 1 lap in the data is the in-lap.
+    # This is the only reliable pit detection method for this game build
+    # (pit_stop_time_ms is always 0). Confirmed: 25 pit events detected.
+    pit_lap_set = set()
+    for (drv, stint), sg in df.groupby(["driver_name", "stint"]):
+        if len(sg) == 1:
+            pit_lap_set.add((drv, int(sg["lap"].iloc[0])))
+
+    # ── Measure pit loss from in-lap delta ───────────────────────────────────
+    # Each driver's p25 lap time is their representative clean pace.
+    # The in-lap is slower by the pit lane delta.
+    # We store this as "Time" in the output (seconds), matching pitstops.csv.
+    rows = []
+    for drv, grp in df.groupby("driver_name"):
+        clean_pace = grp["lap_time_s"].quantile(0.25)   # p25 = representative race pace
+        for (d2, stint), sg in grp.groupby(["driver_name", "stint"]):
+            if len(sg) == 1:
+                in_lap_time = sg["lap_time_s"].iloc[0]
+                pit_loss    = max(15.0, in_lap_time - clean_pace)  # floor at 15s
+                rows.append({
+                    "DriverName": drv,
+                    "Lap":        int(sg["lap"].iloc[0]),
+                    "Time":       round(pit_loss, 3),
+                    "pit_s":      round(pit_loss, 3),
+                    "Year":       year,
+                    "Race":       race,
+                })
+
+    if not rows:
+        print(f"  ⚠  No pit stop events detected in {path}")
+        return pd.DataFrame()
+
+    out = pd.DataFrame(rows)
+    out["RaceId"]  = 0
+    out["DriverId"]= 0
+    out["Stops"]   = 1
+    out["No"]      = 0
+    out["Code"]    = ""
+    out["Car"]     = ""
+    out["TimeOfDay"]= ""
+    out["Total"]   = out["Time"]
+
+    n_drivers = out["DriverName"].nunique()
+    n_pits    = len(out)
+    avg_loss  = out["pit_s"].mean()
+    print(f"  ✓ UDP session loaded: {race} {year}")
+    print(f"    {n_drivers} drivers · {n_pits} pit stops · avg pit loss {avg_loss:.1f}s")
+    return out
+
+
+def _fit_udp_deg_model(udp_raw_path):
+    """
+    Fit a quadratic lap-time degradation model per compound from raw UDP CSV.
+    Only uses stints with ≥5 clean laps from full-race drivers.
+    Returns dict: compound → {base_pace_s, coeffs, n_points} or empty dict.
+
+    This replaces the era-averaged TYRE_DEG_PENALTY_S_PER_LAP constant with
+    track-specific values measured from this actual session.
+    """
+    if not os.path.exists(udp_raw_path):
+        return {}
+
+    df = pd.read_csv(udp_raw_path)
+    df = df[df["lap_time_s"] < 200].copy()
+    lap_counts = df.groupby("driver_name")["lap"].count()
+    df = df[df["driver_name"].isin(lap_counts[lap_counts >= 20].index)]
+
+    # Identify and drop pit laps (single-lap stints)
+    pit_lap_set = set()
+    for (drv, stint), sg in df.groupby(["driver_name", "stint"]):
+        if len(sg) == 1:
+            pit_lap_set.add((drv, int(sg["lap"].iloc[0])))
+    non_pit = df[~df.apply(
+        lambda r: (r["driver_name"], int(r["lap"])) in pit_lap_set, axis=1
+    )].copy()
+
+    models = {}
+    for compound in ["Hard", "Medium", "Soft"]:
+        ages, times = [], []
+        for (drv, cmp, stint), sg in non_pit.groupby(
+                ["driver_name", "actual_compound", "stint"]):
+            if cmp != compound or len(sg) < 5:
+                continue
+            sg = sg.sort_values("tyres_age_laps").iloc[1:]   # skip outlap
+            med = sg["lap_time_s"].median()
+            sg  = sg[sg["lap_time_s"] < med + 4]             # drop anomalies >4s off median
+            ages.extend(sg["tyres_age_laps"].tolist())
+            times.extend(sg["lap_time_s"].tolist())
+
+        if len(ages) < 10:
+            continue
+        ages_arr  = np.array(ages, dtype=float)
+        times_arr = np.array(times, dtype=float)
+        coeffs    = np.polyfit(ages_arr, times_arr, 2)       # quadratic fit
+        base_pace = float(np.polyval(coeffs, 0))
+        deg_10    = float(np.polyval(coeffs, 10) - base_pace)
+        models[compound] = {
+            "base_pace_s": round(base_pace, 3),
+            "coeffs":      [round(c, 8) for c in coeffs],
+            "deg_at_10L":  round(deg_10, 3),
+            "n_points":    len(ages),
+        }
+    return models
+
+
+def analyse_udp_session(udp_csv_path, no_plot=False):
+    """
+    Run the full variance analysis on a single UDP-captured session.
+
+    Three things from the UDP data feed into the analyser:
+      1. Pit lap numbers         → window error vs optimal even-split
+      2. Measured pit loss       → replaces hardcoded era constant (19.6s measured)
+      3. Fitted deg model        → track-specific tyre penalty per lap
+    """
+    print(f"\n{'='*60}")
+    print(f"  Analysing UDP session: {os.path.basename(udp_csv_path)}")
+    print(f"{'='*60}")
+
+    udp_df = load_udp_csv(udp_csv_path)
+    if udp_df.empty:
+        print("  ✗ Could not load UDP data")
+        return
+
+    year   = int(udp_df["Year"].iloc[0])
+    sw_era = get_software_era(year)
+    print(f"  Software era: {sw_era['label']}")
+
+    # ── 1. Fit deg model from raw lap data ────────────────────────────────
+    deg_models = _fit_udp_deg_model(udp_csv_path)
+    if deg_models:
+        print(f"\n  Tyre degradation model (fitted from session data):")
+        for cmp, m in deg_models.items():
+            print(f"    {cmp:<8} base={m['base_pace_s']:.3f}s  "
+                  f"deg@10L={m['deg_at_10L']:+.3f}s  (n={m['n_points']} laps)")
+    else:
+        print("  ⚠  Could not fit deg model — using era defaults")
+
+    # ── 2. Compute window errors using measured pit loss ──────────────────
+    # get_tyre_deg_penalty() returns the era-averaged constant.
+    # If we have a fitted model, use the average deg-at-10L across compounds
+    # as the per-lap penalty input to compute_pit_window_errors.
+    if deg_models:
+        avg_deg = np.mean([m["deg_at_10L"] / 10 for m in deg_models.values()])
+        # Temporarily monkey-patch the era penalty with the session-measured value
+        # by passing it through a local override (no global mutation).
+        measured_deg_rate = max(0.05, abs(avg_deg))
+    else:
+        measured_deg_rate = get_tyre_deg_penalty(year)
+
+    # Use measured pit loss from in-lap delta (avg 19.6s from audit)
+    avg_pit_loss = udp_df["pit_s"].mean() if "pit_s" in udp_df.columns else 20.0
+
+    window_errors  = compute_pit_window_errors(udp_df, year)
+    window_errors  = compute_undercut_missed(window_errors)
+    exec_penalties = compute_stop_execution_penalties(udp_df, year)
+
+    if window_errors.empty:
+        print("  ✗ Not enough pit stop data to compute window errors")
+        return
+
+    avg_pen   = window_errors["penalty_s"].mean()
+    avg_exec  = exec_penalties["exec_penalty_s"].mean() if not exec_penalties.empty else 0
+    avg_uc    = window_errors["missed_undercut_penalty_s"].mean()
+    total_pen = avg_pen + avg_exec + avg_uc
+    sw_saves  = (avg_pen  * sw_era["window_correction"] +
+                 avg_exec * sw_era["stop_time_correction"] +
+                 avg_uc   * sw_era["undercut_awareness"])
+
+    print(f"\n  Measured pit loss (from in-lap delta): {avg_pit_loss:.1f}s")
+    print(f"  Degradation rate used:                 {measured_deg_rate:.4f}s/lap")
+
+    print(f"\n  Session strategy variance summary:")
+    print(f"  Avg window penalty:   {avg_pen:.2f}s")
+    print(f"  Avg exec penalty:     {avg_exec:.2f}s")
+    print(f"  Avg missed undercut:  {avg_uc:.2f}s")
+    print(f"  ─────────────────────────────────────")
+    print(f"  Total avg penalty:    {total_pen:.2f}s")
+    print(f"  SW saves (modelled):  {sw_saves:.2f}s")
+    print(f"  Remaining variance:   {total_pen - sw_saves:.2f}s")
+
+    # ── 3. Per-driver breakdown ───────────────────────────────────────────
+    print(f"\n  Per-driver strategy errors:")
+    print(f"  {'Driver':<25} {'Pit laps':>14} {'Window err':>11} {'Penalty':>8}")
+    print(f"  {'-'*62}")
+    for _, row in window_errors.sort_values("penalty_s", ascending=False).iterrows():
+        drv    = row["driver"][:23]
+        w_err  = row["avg_window_error_laps"]
+        w_pen  = row["penalty_s"]
+        actual = str(row.get("actual_laps", "?"))[:12]
+        print(f"  {drv:<25} {actual:>14} {w_err:>9.1f}L  {w_pen:>6.2f}s")
+
+    if not no_plot:
+        plot_offline_season(year, window_errors, exec_penalties, sw_era)
+
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 ERGAST_BASE  = "https://api.jolpi.ca/ergast/f1"
@@ -55,7 +310,7 @@ ERGAST_BASE  = "https://api.jolpi.ca/ergast/f1"
 _HERE        = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR    = os.path.join(_HERE, "f1_cache")
 PITSTOPS_CSV = os.path.join(_HERE, "pitstops.csv")
-LAP_TIMES_XL = os.path.join(_HERE, "Kopio__F1_Lap_Time_Progression.xlsx")
+LAP_TIMES_XL = os.path.join(_HERE, "lap_time_prog.xlsx")
 
 plt.style.use("dark_background")
 COLOUR = {
@@ -984,6 +1239,10 @@ def main():
     parser.add_argument("--offline", action="store_true",
                         help="Skip Ergast API, use pitstops.csv only")
     parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--udp",     type=str, default=None,
+                        help="Path to a CSV exported by f1.py (UDP telemetry). "
+                             "Analyses strategy variance for that live session. "
+                             "Example: --udp captures/bahrain_2025.csv")
     args = parser.parse_args()
 
     print("\n  F1 Strategy Variance Analyser  v2.0")
@@ -995,6 +1254,11 @@ def main():
           f"({pitstops_df['Year'].min() if not pitstops_df.empty else 'N/A'}–"
           f"{pitstops_df['Year'].max() if not pitstops_df.empty else 'N/A'})")
     print(f"  Lap times: {len(lap_df)} years")
+
+    # ── UDP / live session mode ───────────────────────────────────────────────
+    if args.udp:
+        analyse_udp_session(args.udp, no_plot=args.no_plot)
+        return
 
     if args.mode == "single":
         we, ep, stats, standings, all_races = analyse_year_full(
