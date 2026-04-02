@@ -1,0 +1,32 @@
+year,era_label,pred_winner,perf_winner,title_flips,avg_variance_s,avg_points_gain
+1994,Real-time data,Michael Schumacher,Damon Hill,True,18.17,0.62
+1995,Real-time data,Michael Schumacher,Jean Alesi,True,21.18,0.76
+1996,Real-time data,Jacques Villeneuve,Jean Alesi,True,14.6,0.81
+1997,Real-time data,Heinz-Harald Frentzen,David Coulthard,True,15.2,0.64
+1998,Real-time data,David Coulthard,Heinz-Harald Frentzen,True,15.1,0.75
+1999,Real-time data,Heinz-Harald Frentzen,Eddie Irvine,True,15.31,0.68
+2000,Simulation tools,Ralf Schumacher,Ralf Schumacher,False,18.41,0.65
+2001,Simulation tools,Michael Schumacher,Michael Schumacher,False,17.12,0.67
+2002,Simulation tools,Michael Schumacher,Michael Schumacher,False,19.93,0.35
+2003,Simulation tools,David Coulthard,David Coulthard,False,17.19,0.7
+2004,Simulation tools,Felipe Massa,Felipe Massa,False,15.67,0.7
+2005,Simulation tools,Rubens Barrichello,Rubens Barrichello,False,15.1,0.64
+2006,Full analytics,Fernando Alonso,Felipe Massa,True,14.83,1.85
+2007,Full analytics,Robert Kubica,Fernando Alonso,True,14.68,1.95
+2008,Full analytics,Lewis Hamilton,Lewis Hamilton,False,15.12,2.22
+2009,Full analytics,Jenson Button,Jenson Button,False,13.12,2.19
+2010,Full analytics,Sebastian Vettel,Sebastian Vettel,False,20.25,1.0
+2011,Full analytics,Sebastian Vettel,Sebastian Vettel,False,13.04,1.27
+2012,Predictive models,Jenson Button,Sebastian Vettel,True,12.77,0.68
+2013,Predictive models,Lewis Hamilton,Nico Rosberg,True,13.9,0.65
+2014,Predictive models,Daniel Ricciardo,Jean-Ã‰ric Vergne,True,10.01,0.49
+2015,Predictive models,Felipe Massa,Daniel Ricciardo,True,12.5,0.61
+2016,Predictive models,Felipe Massa,Felipe Massa,False,12.74,0.53
+2017,Predictive models,Valtteri Bottas,Romain Grosjean,True,12.71,0.46
+2018,AI / Monte Carlo,Lewis Hamilton,Lewis Hamilton,False,12.18,0.7
+2019,AI / Monte Carlo,Lewis Hamilton,Lewis Hamilton,False,12.41,1.11
+2020,AI / Monte Carlo,Valtteri Bottas,Valtteri Bottas,False,13.32,0.86
+2021,AI / Monte Carlo,Max Verstappen,Max Verstappen,False,11.87,0.82
+2022,AI / Monte Carlo,Charles Leclerc,Charles Leclerc,False,12.14,0.99
+2023,AI / Monte Carlo,Max Verstappen,Max Verstappen,False,12.93,0.84
+2024,AI / Monte Carlo,Max Verstappen,Max Verstappen,False,11.65,0.76

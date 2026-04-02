@@ -1,63 +1,95 @@
 """
-F1 Championship Strategy Variance Analyser  v2.0
-=================================================
+F1 Championship Simulator  v4.0
+================================
 Bachelor's Thesis Tool — LUT University
 "The impact of software engineering on strategy development in Formula One"
 
-Research question:
-    How much did strategy variance (suboptimal pit windows, missed safety cars,
-    poor tyre management) influence championship outcomes — and how does this
-    variance decrease as software sophistication increases across eras?
+WHAT THIS FILE DOES:
+    Uses the trained Random Forest model from rf.py to answer the
+    counterfactual question:
 
-Changes from v1 (Testi.py):
-    FIX  — Excel loader now uses correct column names from Final Data sheet
-    FIX  — Ergast API calls wrapped with graceful fallback + offline mode
-    FIX  — Driver name matching improved (last-name + fuzzy fallback)
-    FIX  — Race name matching now normalises slugs for pitstops.csv
-    FIX  — Points system applied to original race positions, not simulated
-    FIX  — simulate_corrected_season handles all-NaN position rows
-    IMPR — Simulation model now includes THREE variance sources:
-             1. Pit window timing error (as before)
-             2. Pit stop execution time (slow stops = time penalty)
-             3. Under/over-cut opportunity missed (estimated from lap gaps)
-    IMPR — Per-era field_spread_s calibrated to real data
-    IMPR — Tyre degradation penalty model replaces flat 0.3s/lap constant
-    IMPR — Sweep mode works fully offline from pitstops.csv
+        "If every driver had used perfect pit strategy, would the
+         championship winner have changed?"
+
+    No hardcoded correction factors. No assumed field spread values.
+    The simulation is entirely driven by what the RF learned from real data.
+
+HOW IT WORKS:
+    1. Load f1_rf_dataset.csv (produced by analyser.py + rf.py)
+    2. Train the RF model identically to rf.py
+    3. For each driver-race, create a "perfect strategy" copy by zeroing
+       out window_penalty_s, exec_penalty_s, and avg_window_error_laps
+       — keeping grid_position and era_code unchanged (car quality is fixed)
+    4. Run both actual and perfect-strategy features through the RF
+       to get predicted points under each scenario
+    5. Sum predicted points per driver per season → championship standings
+    6. Compare: does the predicted champion change?
+
+WHY THIS IS VALID:
+    The RF was trained on real historical data where variance and points
+    are both observed. Zeroing the variance features is a standard
+    counterfactual prediction — asking the model to extrapolate to a
+    scenario where strategy errors were eliminated. The RF's own learned
+    weights determine how much those features matter; there are no
+    manually chosen correction coefficients.
+
+    Limitation acknowledged: zeroing variance features is mild
+    extrapolation below the minimum observed values. This is noted
+    as a limitation in the thesis methodology section.
+
+RELATIONSHIP TO OTHER FILES:
+    analyser.py  →  computes variance metrics from raw pitstop data
+    rf.py        →  trains RF, saves f1_rf_dataset.csv, returns model
+    f1.py (this) →  loads dataset + model, runs championship simulation
 
 Usage:
-    pip install requests pandas numpy matplotlib openpyxl
-    python f1_strategy_analyser.py                        # 2010, single
-    python f1_strategy_analyser.py --year 2008
-    python f1_strategy_analyser.py --mode sweep --start 1994 --end 2010
-    python f1_strategy_analyser.py --offline              # skip Ergast API
+    python analyser.py          # produces f1_rf_dataset.csv via rf.py
+    python f1.py                # simulate all years in dataset
+    python f1.py --year 2010    # single season
+    python f1.py --start 1994 --end 2024
+    python f1.py --no-plot
 """
 
-import requests
 import pandas as pd
 import numpy as np
+import argparse, os, sys
 import matplotlib
-# Use TkAgg on Windows/Linux desktop; fall back to Agg (file-only) if no display.
 try:
     matplotlib.use("TkAgg")
 except Exception:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import json, time, argparse, os, sys
-from collections import defaultdict
 
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import cross_val_score
 
-# ── Configuration ──────────────────────────────────────────────────────────────
-ERGAST_BASE  = "https://api.jolpi.ca/ergast/f1"
+# ── Path resolution ────────────────────────────────────────────────────────────
+_HERE       = os.path.dirname(os.path.abspath(__file__))
+OUTPUTS_DIR = os.path.join(_HERE, "outputs")
+RF_DATASET_CSV = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
 
-# Resolve paths relative to THIS script file, not the working directory.
-# This means the CSV/Excel files just need to sit next to analyzer.py.
-_HERE        = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR    = os.path.join(_HERE, "f1_cache")
-PITSTOPS_CSV = os.path.join(_HERE, "pitstops.csv")
-LAP_TIMES_XL = os.path.join(_HERE, "Kopio__F1_Lap_Time_Progression.xlsx")
+# Ensure sibling files are importable regardless of cwd
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
-plt.style.use("dark_background")
+# Must match rf.py exactly — the model is trained on these columns
+FEATURE_COLS = [
+    "grid_position",
+    "avg_window_error_laps",
+    "window_penalty_s",
+    "exec_penalty_s",
+    "era_code",
+]
+
+# Variance features zeroed for the perfect-strategy counterfactual.
+# grid_position and era_code are NOT zeroed — car quality and era are fixed.
+VARIANCE_FEATURES = [
+    "avg_window_error_laps",
+    "window_penalty_s",
+    "exec_penalty_s",
+]
+
 COLOUR = {
     "red":    "#e8003d",
     "amber":  "#ffb800",
@@ -70,958 +102,555 @@ COLOUR = {
     "text":   "#f0f0f0",
 }
 
-# ── Points systems ─────────────────────────────────────────────────────────────
-POINTS_SYSTEMS = {
-    1950: {1:8,  2:6,  3:4,  4:3,  5:2},
-    1961: {1:9,  2:6,  3:4,  4:3,  5:2},
-    2003: {1:10, 2:8,  3:6,  4:5,  5:4,  6:3,  7:2,  8:1},
-    2010: {1:25, 2:18, 3:15, 4:12, 5:10, 6:8,  7:6,  8:4,  9:2, 10:1},
-}
 
-def get_points_system(year):
-    applicable = {y: v for y, v in POINTS_SYSTEMS.items() if y <= year}
-    return applicable[max(applicable.keys())]
+# ── Model training ─────────────────────────────────────────────────────────────
 
-# ── Software era model ─────────────────────────────────────────────────────────
-# Each value represents what fraction of the relevant error type a well-resourced
-# team *could* eliminate with the tools available in that era.
-# Sources: Heilmeier et al. 2018, Fuentes 2020, internal model.
-SOFTWARE_ERAS = {
-    1950: {"label": "Pre-digital",        "window_correction": 0.00, "sc_awareness": 0.05,
-           "stop_time_correction": 0.00,  "undercut_awareness": 0.00, "variance_reduction": 0.00},
-    1975: {"label": "Early electronics",  "window_correction": 0.08, "sc_awareness": 0.10,
-           "stop_time_correction": 0.05,  "undercut_awareness": 0.03, "variance_reduction": 0.05},
-    1984: {"label": "Telemetry begins",   "window_correction": 0.15, "sc_awareness": 0.20,
-           "stop_time_correction": 0.12,  "undercut_awareness": 0.10, "variance_reduction": 0.12},
-    1994: {"label": "Real-time data",     "window_correction": 0.22, "sc_awareness": 0.35,
-           "stop_time_correction": 0.20,  "undercut_awareness": 0.18, "variance_reduction": 0.20},
-    2000: {"label": "Simulation tools",   "window_correction": 0.42, "sc_awareness": 0.55,
-           "stop_time_correction": 0.40,  "undercut_awareness": 0.38, "variance_reduction": 0.38},
-    2006: {"label": "Full analytics",     "window_correction": 0.62, "sc_awareness": 0.72,
-           "stop_time_correction": 0.60,  "undercut_awareness": 0.58, "variance_reduction": 0.55},
-    2012: {"label": "Predictive models",  "window_correction": 0.78, "sc_awareness": 0.85,
-           "stop_time_correction": 0.76,  "undercut_awareness": 0.74, "variance_reduction": 0.70},
-    2018: {"label": "AI / Monte Carlo",   "window_correction": 0.91, "sc_awareness": 0.95,
-           "stop_time_correction": 0.90,  "undercut_awareness": 0.89, "variance_reduction": 0.88},
-}
-
-def get_software_era(year):
-    applicable = {y: v for y, v in SOFTWARE_ERAS.items() if y <= year}
-    era = dict(applicable[max(applicable.keys())])
-    era["year"] = max(applicable.keys())
-    return era
-
-# ── Tyre degradation model ─────────────────────────────────────────────────────
-# Penalty per lap of pit-window error, calibrated per era.
-# Pre-2010: refuelling meant a 1-lap error had bigger consequence.
-# Post-2010: pure tyre deg era, more linear.
-TYRE_DEG_PENALTY_S_PER_LAP = {
-    1994: 0.45,   # refuelling era: fuel load + worn tyres compound
-    2000: 0.42,
-    2005: 0.38,   # single-tyre rules
-    2007: 0.35,   # Bridgestone monopoly, more durable
-    2010: 0.30,   # no refuelling, Bridgestone final year
-}
-
-def get_tyre_deg_penalty(year):
-    applicable = {y: v for y, v in TYRE_DEG_PENALTY_S_PER_LAP.items() if y <= year}
-    return applicable[max(applicable.keys())]
-
-# ── Field spread (avg gap between cars in race) ────────────────────────────────
-# Used to convert time penalty → position change
-FIELD_SPREAD_S = {
-    1994: 2.2,   # large field spread in early 90s
-    2000: 1.8,
-    2006: 1.5,
-    2012: 1.2,
-    2018: 1.0,
-}
-
-def get_field_spread(year):
-    applicable = {y: v for y, v in FIELD_SPREAD_S.items() if y <= year}
-    return applicable[max(applicable.keys())]
-
-# ── Caching ────────────────────────────────────────────────────────────────────
-os.makedirs(CACHE_DIR, exist_ok=True)
-
-def cached_get(url, params=None):
-    """Fetch from Jolpica with disk caching and automatic pagination.
-    Returns None if network is unavailable."""
-    safe = url.replace("/","_").replace(":","").replace("?","_")
-    if params:
-        safe += "_" + "_".join(f"{k}{v}" for k,v in sorted(params.items()))
-    cache_path = os.path.join(CACHE_DIR, safe[:180] + ".json")
-
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
-
-    all_items = []
-    offset = 0
-    limit  = 100
-    total  = None
-    base_data = None
-
-    while True:
-        p = dict(params or {})
-        p["limit"]  = limit
-        p["offset"] = offset
-        try:
-            print(f"  → fetching {url} (offset={offset})")
-            time.sleep(0.4)
-            r = requests.get(url, params=p, timeout=15)
-            r.raise_for_status()
-            data = r.json()
-        except Exception as exc:
-            print(f"  ⚠  API unavailable ({type(exc).__name__}) — using offline mode")
-            return None
-
-        if base_data is None:
-            base_data = data
-
-        mr = data["MRData"]
-        table_key = next(k for k in mr if k.endswith("Table"))
-        table     = mr[table_key]
-        inner_key = next(k for k in table if isinstance(table[k], list))
-        all_items.extend(table[inner_key])
-
-        if total is None:
-            total = int(mr.get("total", len(all_items)))
-        offset += limit
-        if offset >= total:
-            break
-
-    mr = base_data["MRData"]
-    table_key = next(k for k in mr if k.endswith("Table"))
-    inner_key = next(k for k in base_data["MRData"][table_key]
-                     if isinstance(base_data["MRData"][table_key][k], list))
-    base_data["MRData"][table_key][inner_key] = all_items
-
-    with open(cache_path, "w") as f:
-        json.dump(base_data, f)
-    return base_data
-
-# ── Ergast fetchers ────────────────────────────────────────────────────────────
-
-def fetch_season_results(year):
-    url  = f"{ERGAST_BASE}/{year}/results.json"
-    data = cached_get(url, {"limit": 500})
-    if data is None:
-        return pd.DataFrame()
-    races = data["MRData"]["RaceTable"]["Races"]
-    rows  = []
-    for race in races:
-        for r in race.get("Results", []):
-            rows.append({
-                "year":        year,
-                "round":       int(race["round"]),
-                "race_name":   race["raceName"],
-                "circuit":     race["Circuit"]["circuitId"],
-                "driver":      r["Driver"]["driverId"],
-                "driver_name": r["Driver"]["familyName"],
-                "constructor": r["Constructor"]["constructorId"],
-                "grid":        int(r.get("grid", 0)),
-                "position":    int(r["position"]) if r.get("positionText","").isdigit() else None,
-                "points":      float(r.get("points", 0)),
-                "status":      r.get("status",""),
-                "laps":        int(r.get("laps", 0)),
-            })
-    return pd.DataFrame(rows)
-
-
-def fetch_championship_standings(year):
-    url  = f"{ERGAST_BASE}/{year}/last/driverStandings.json"
-    data = cached_get(url, {"limit": 100})
-    if data is None:
-        return pd.DataFrame()
-    lists = data["MRData"]["StandingsTable"]["StandingsLists"]
-    if not lists:
-        return pd.DataFrame()
-    rows = []
-    for s in lists[0]["DriverStandings"]:
-        rows.append({
-            "year":        year,
-            "position":    int(s["position"]),
-            "driver":      s["Driver"]["driverId"],
-            "driver_name": s["Driver"]["familyName"],
-            "points":      float(s["points"]),
-            "wins":        int(s["wins"]),
-        })
-    return pd.DataFrame(rows)
-
-# ── Local data loaders ─────────────────────────────────────────────────────────
-
-def load_pitstops_csv(path=PITSTOPS_CSV):
-    if not os.path.exists(path):
-        print(f"  ⚠  {path} not found")
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-
-    # FIX: parse time string "MM:SS.mmm" or plain float
-    def to_s(t):
-        try:
-            t = str(t).strip()
-            if ":" in t:
-                parts = t.split(":")
-                return float(parts[0]) * 60 + float(parts[1])
-            return float(t)
-        except Exception:
-            return None
-
-    df["pit_s"] = df["Time"].apply(to_s)
-    df = df[df["pit_s"].between(10, 120)]   # exclude safety-car outliers
-    df = df[df["Lap"] > 3]                  # exclude formation-lap retirements
-    return df
-
-
-def load_lap_progression(path=LAP_TIMES_XL):
+def train_model(dataset):
     """
-    FIX: column names from Final Data (header row 1) are:
-         'Unnamed: 0', 'Year', 'Average Multiplier', 'Theoretical Lap (s)', ...
-    Old code used wrong positional names.
+    Train RF identically to rf.py — 1994-2011 train, 2012-2024 test.
+    Called when f1.py runs standalone (model not passed in from rf.py).
     """
-    if not os.path.exists(path):
-        print(f"  ⚠  {path} not found — using fallback")
-        return pd.DataFrame()
-    try:
-        df = pd.read_excel(path, sheet_name="Final Data", header=1)
-        # Keep only the columns we actually need
-        df = df[["Year", "Average Multiplier", "Theoretical Lap (s)"]].copy()
-        df.columns = ["Year", "avg_multiplier", "theoretical_lap_s"]
-        df = df.dropna(subset=["Year", "theoretical_lap_s"])
-        df["Year"] = df["Year"].astype(int)
-        return df
-    except Exception as exc:
-        print(f"  ⚠  Could not parse {path}: {exc}")
-        return pd.DataFrame()
+    train = dataset[dataset["year"] <= 2011].copy()
+    test  = dataset[dataset["year"] >  2011].copy()
 
+    if train.empty:
+        raise ValueError("No training data found (years <= 2011)")
 
-# ── Race laps lookup ───────────────────────────────────────────────────────────
-TYPICAL_RACE_LAPS = {
-    1994:62, 1995:62, 1996:62, 1997:62, 1998:62, 1999:62,
-    2000:62, 2001:62, 2002:62, 2003:62, 2004:62, 2005:62,
-    2006:62, 2007:62, 2008:62, 2009:60, 2010:60,
-}
+    X_train = train[FEATURE_COLS].fillna(0)
+    y_train = train["points_scored"]
 
-# ── Name-matching helpers ──────────────────────────────────────────────────────
+    model = RandomForestRegressor(
+        n_estimators=200,
+        max_depth=6,
+        min_samples_leaf=5,
+        random_state=42,
+    )
+    model.fit(X_train, y_train)
 
-def _normalise(s):
-    """Lowercase, strip accents roughly, keep alphanum."""
-    return "".join(c for c in str(s).lower() if c.isalpha())
+    train_r2 = model.score(X_train, y_train)
+    cv       = cross_val_score(model, X_train, y_train, cv=5)
+    print(f"  Train R²:      {train_r2:.3f}")
+    print(f"  Cross-val R²:  {cv.mean():.3f} ± {cv.std():.3f}")
 
-def match_driver(ergast_driver_id, pitstops_name_series):
-    """
-    FIX: v1 only matched on last name, failing for e.g. 'de la Rosa'.
-    Now tries: (1) last word exact, (2) any word in name, (3) normalised contains.
-    Returns boolean Series.
-    """
-    eid = _normalise(ergast_driver_id.split("_")[-1])   # e.g. 'hamilton'
-    norm = pitstops_name_series.apply(lambda n: _normalise(n.split()[-1]))
-    mask = norm == eid
-    if mask.any():
-        return mask
-    # fallback: any word in full name
-    norm2 = pitstops_name_series.apply(_normalise)
-    return norm2.str.contains(eid, na=False)
-
-# ── Pit stop execution quality ─────────────────────────────────────────────────
-# A "slow" pit stop relative to the best stop at that race costs track time.
-# We estimate this from pitstops.csv pit_s values.
-
-def compute_stop_execution_penalties(pitstops_df, year):
-    """
-    For each (race, driver), compare their mean stop time to the fastest
-    stop in that race. Difference = execution penalty (seconds).
-    Returns df: year, race, driver, avg_stop_time_s, fastest_stop_s, exec_penalty_s
-    """
-    if pitstops_df.empty or "Year" not in pitstops_df.columns:
-        return pd.DataFrame()
-    year_df = pitstops_df[pitstops_df["Year"] == year].copy()
-    if year_df.empty:
-        return pd.DataFrame()
-
-    results = []
-    for race, grp in year_df.groupby("Race"):
-        fastest = grp["pit_s"].min()
-        for driver, dgrp in grp.groupby("DriverName"):
-            avg_stop = dgrp["pit_s"].mean()
-            results.append({
-                "year": year,
-                "race": race,
-                "driver": driver,
-                "avg_stop_time_s": round(avg_stop, 3),
-                "fastest_stop_s":  round(fastest, 3),
-                "exec_penalty_s":  round(max(0.0, avg_stop - fastest), 3),
-                "n_stops":         len(dgrp),
-            })
-    return pd.DataFrame(results)
-
-
-# ── Pit window timing analysis ─────────────────────────────────────────────────
-
-def tyre_deg_loss(lap, total_laps, deg_rate):
-    """
-    Cumulative lap-time loss due to tyre degradation up to `lap`.
-
-    Models degradation as quadratic: deg grows slowly early in a stint,
-    accelerates toward the end. This matches observed F1 tyre behaviour
-    (Heilmeier et al. 2018).
-
-      loss(lap) = deg_rate * lap^2 / total_laps
-
-    deg_rate is the era-calibrated seconds-per-lap constant from
-    get_tyre_deg_penalty(year). Dividing by total_laps normalises it so
-    the scale is consistent across races of different lengths.
-    """
-    return deg_rate * (lap ** 2) / total_laps
-
-
-def optimal_pit_laps(n_stops, total_laps, deg_rate):
-    """
-    Find the pit lap(s) that minimise total race time lost to tyre
-    degradation, given n_stops pit stops.
-
-    For small n_stops (<=3): brute-force grid search — exact solution.
-    For larger n_stops: closed-form equal-split (computationally safe
-    fallback; with many stops the marginal gain of optimisation is tiny).
-
-    The race is divided into (n_stops+1) stints. For each candidate
-    pit schedule [p1, p2, ...], total degradation cost is:
-
-        sum over stints of: tyre_deg_loss(stint_length, total_laps, deg_rate)
-
-    The schedule with the lowest total cost is the optimal pit window.
-    """
-    if n_stops == 0:
-        return []
-
-    # Safety: cap at 4 stops for brute-force; beyond that use equal-split
-    BRUTE_FORCE_MAX = 4
-    if n_stops > BRUTE_FORCE_MAX:
-        return [int(total_laps * i / (n_stops + 1))
-                for i in range(1, n_stops + 1)]
-
-    best_cost  = float("inf")
-    best_laps  = None
-
-    def search(stops_left, start_lap, chosen):
-        nonlocal best_cost, best_laps
-        if stops_left == 0:
-            pit_laps  = chosen + [total_laps]
-            prev, cost = 0, 0.0
-            for p in pit_laps:
-                cost += tyre_deg_loss(p - prev, total_laps, deg_rate)
-                prev  = p
-            if cost < best_cost:
-                best_cost = cost
-                best_laps = list(chosen)
-            return
-        for lap in range(start_lap + 1, total_laps - stops_left + 1):
-            search(stops_left - 1, lap, chosen + [lap])
-
-    search(n_stops, 3, [])   # earliest pit = lap 4
-    return best_laps or [int(total_laps * i / (n_stops + 1))
-                         for i in range(1, n_stops + 1)]
-
-
-def compute_pit_window_errors(pitstops_df, year):
-    """
-    For each driver/race, compute how far their actual pit lap was from
-    the theoretically optimal pit window derived from tyre degradation
-    minimisation (not a naive equal-split).
-
-    Optimal laps are found by optimal_pit_laps(), which minimises total
-    quadratic tyre-deg loss across all stints. This is the same principle
-    used in real F1 strategy tools (Heilmeier et al. 2018).
-
-    Returns df with driver, race, window_error_laps, penalty_s.
-    """
-    if pitstops_df.empty or "Year" not in pitstops_df.columns:
-        return pd.DataFrame()
-    year_df = pitstops_df[pitstops_df["Year"] == year].copy()
-    if year_df.empty:
-        return pd.DataFrame()
-
-    total_laps  = TYPICAL_RACE_LAPS.get(year, 62)
-    deg_rate    = get_tyre_deg_penalty(year)
-
-    results = []
-    for (race, driver), grp in year_df.groupby(["Race", "DriverName"]):
-        grp = grp.sort_values("Lap")
-        n_stops     = len(grp)
-        actual_laps = grp["Lap"].tolist()
-
-        # Degradation-model optimal window (replaces naive equal-split)
-        opt = optimal_pit_laps(n_stops, total_laps, deg_rate)
-
-        errors   = [abs(a - o) for a, o in zip(actual_laps, opt)]
-        avg_err  = float(np.mean(errors))
-        penalty  = avg_err * deg_rate
-
-        results.append({
-            "year":                  year,
-            "race":                  race,
-            "driver":                driver,
-            "n_stops":               n_stops,
-            "actual_laps":           actual_laps,
-            "optimal_laps":          opt,
-            "avg_window_error_laps": round(avg_err, 2),
-            "penalty_s":             round(penalty, 2),
-        })
-    return pd.DataFrame(results)
-
-
-# ── Undercut / overcut opportunity model ───────────────────────────────────────
-# If two drivers were within a certain lap-gap threshold and pitted within
-# the same window, the one who pitted LATER would gain from an undercut.
-# We model a missed undercut as 0.5s extra penalty when the driver failed
-# to act (their window_error > threshold) but a competitor did.
-
-UNDERCUT_THRESHOLD_LAPS = 2   # within 2 laps of optimal = could have undercut
-
-def compute_undercut_missed(window_errors):
-    """
-    IMPR: Estimate missed undercut opportunities per race.
-    For each race, flag drivers who were close to optimal AND could have
-    benefitted from going earlier/later than they did.
-    Returns the window_errors df with 'missed_undercut_penalty_s' column added.
-    """
-    if window_errors.empty:
-        return window_errors
-
-    we = window_errors.copy()
-    we["missed_undercut_penalty_s"] = 0.0
-
-    for race, grp in we.groupby("race"):
-        # Drivers who were within threshold of optimal — likely in undercut window
-        near_optimal = grp[grp["avg_window_error_laps"] <= UNDERCUT_THRESHOLD_LAPS]
-        # Drivers who were late to pit (positive error) lose to drivers who were early
-        for idx, row in grp.iterrows():
-            if row["avg_window_error_laps"] > UNDERCUT_THRESHOLD_LAPS and len(near_optimal) > 0:
-                # Estimated extra delta from missing the undercut
-                we.loc[idx, "missed_undercut_penalty_s"] = 0.5 * (row["n_stops"])
-
-    return we
-
-
-# ── Season simulation ──────────────────────────────────────────────────────────
-
-def simulate_corrected_season(race_results, window_errors, exec_penalties,
-                               year, sw_era):
-    """
-    IMPR v2: Three variance sources are now modelled:
-      1. Pit window timing error   → sw_era["window_correction"]
-      2. Pit stop execution time   → sw_era["stop_time_correction"]
-      3. Missed undercut/overcut   → sw_era["undercut_awareness"]
-
-    FIX: Points applied to original race positions (not swapped), then
-         corrected positions computed after all penalties resolved.
-    FIX: NaN positions handled gracefully.
-    """
-    points_sys     = get_points_system(year)
-    field_spread   = get_field_spread(year)
-    corrected_races = []
-
-    sw_wc = sw_era["window_correction"]
-    sw_sc = sw_era["stop_time_correction"]
-    sw_uc = sw_era["undercut_awareness"]
-
-    for round_num in sorted(race_results["round"].unique()):
-        race      = race_results[race_results["round"] == round_num].copy()
-        race_name = race["race_name"].iloc[0]
-        circuit   = race["circuit"].iloc[0]   # Ergast circuit slug
-
-        # Normalise circuit slug to match pitstops.csv race names
-        circuit_norm = circuit.replace("_", "-").lower()
-
-        race["original_position"] = race["position"]
-        race["total_penalty_s"]   = 0.0
-        race["sw_saved_s"]        = 0.0
-
-        # ── 1. Pit window penalty ────────────────────────────────────────────
-        if not window_errors.empty:
-            for _, we_row in window_errors[
-                window_errors["race"].str.lower().str.replace("_","-") == circuit_norm
-            ].iterrows():
-                mask = match_driver(we_row["driver"], race["driver"])
-                if mask.any():
-                    idx = race[mask].index[0]
-                    p   = we_row["penalty_s"]
-                    uc  = we_row.get("missed_undercut_penalty_s", 0.0)
-                    total   = p + uc
-                    saved   = p * sw_wc + uc * sw_uc
-                    race.loc[idx, "total_penalty_s"] += total
-                    race.loc[idx, "sw_saved_s"]      += saved
-
-        # ── 2. Pit stop execution penalty ───────────────────────────────────
-        if not exec_penalties.empty:
-            for _, ep_row in exec_penalties[
-                exec_penalties["race"].str.lower().str.replace("_","-") == circuit_norm
-            ].iterrows():
-                mask = race["driver_name"].apply(_normalise).str.contains(
-                    _normalise(ep_row["driver"].split()[-1]), na=False
-                )
-                if mask.any():
-                    idx  = race[mask].index[0]
-                    ep   = ep_row["exec_penalty_s"]
-                    saved = ep * sw_sc
-                    race.loc[idx, "total_penalty_s"] += ep
-                    race.loc[idx, "sw_saved_s"]      += saved
-
-        # ── Compute positions ────────────────────────────────────────────────
-        # Net time saved by software
-        race["net_delta_s"] = race["sw_saved_s"]
-
-        # Convert saved time → positions gained
-        race["pos_gain"] = (race["net_delta_s"] / field_spread).round().astype(int)
-
-        # FIX: handle NaN positions cleanly
-        valid_pos = race["original_position"].notna()
-        race["simulated_position"] = race["original_position"].copy()
-        race.loc[valid_pos, "simulated_position"] = (
-            (race.loc[valid_pos, "original_position"] - race.loc[valid_pos, "pos_gain"])
-            .clip(lower=1)
+    if not test.empty:
+        test_r2 = model.score(
+            test[FEATURE_COLS].fillna(0), test["points_scored"]
         )
+        print(f"  Test  R²:      {test_r2:.3f}")
 
-        # Points
-        race["original_points"]   = race["original_position"].map(
-            lambda p: points_sys.get(int(p), 0) if pd.notna(p) else 0
-        )
-        race["simulated_points"]  = race["simulated_position"].map(
-            lambda p: points_sys.get(int(p), 0) if pd.notna(p) else 0
-        )
+    importances = pd.Series(model.feature_importances_, index=FEATURE_COLS)
+    print(f"\n  Feature importances:")
+    for feat, imp in importances.sort_values(ascending=False).items():
+        bar = "█" * int(imp * 40)
+        print(f"    {feat:<30} {imp:.3f}  {bar}")
 
-        corrected_races.append(race)
+    return model
 
-    if not corrected_races:
-        return pd.DataFrame(), pd.DataFrame()
 
-    all_races = pd.concat(corrected_races, ignore_index=True)
+# ── Counterfactual prediction ──────────────────────────────────────────────────
 
-    # Championship tally
-    orig_champ = (
-        all_races.groupby(["driver","driver_name"])["original_points"]
+def predict_perfect_strategy(dataset, model):
+    """
+    For every driver-race predict points under two scenarios:
+
+      actual:  features as observed (real historical variance)
+      perfect: variance features zeroed, grid_position + era_code unchanged
+
+    The difference in predicted points is entirely determined by what the
+    RF learned — no correction coefficients are applied manually.
+
+    Returns dataset with added columns:
+      rf_predicted_points  — RF prediction using actual features
+      rf_perfect_points    — RF prediction with variance features zeroed
+      rf_points_gain       — difference (perfect − actual)
+    """
+    X_actual  = dataset[FEATURE_COLS].fillna(0)
+    X_perfect = X_actual.copy()
+    for col in VARIANCE_FEATURES:
+        X_perfect[col] = 0.0
+
+    dataset = dataset.copy()
+    dataset["rf_predicted_points"] = model.predict(X_actual)
+    dataset["rf_perfect_points"]   = model.predict(X_perfect)
+    dataset["rf_points_gain"]      = (
+        dataset["rf_perfect_points"] - dataset["rf_predicted_points"]
+    ).round(3)
+
+    return dataset
+
+
+# ── Championship simulation ────────────────────────────────────────────────────
+
+def simulate_season(year_df):
+    """
+    Given one season's driver-race rows (with rf predictions already added),
+    produce championship standings under both scenarios.
+
+    Uses RF-predicted points so both sides come from the same model —
+    the comparison is internally consistent.
+    """
+    hist = (
+        year_df.groupby("driver")["rf_predicted_points"]
         .sum().reset_index()
-        .sort_values("original_points", ascending=False)
+        .rename(columns={"rf_predicted_points": "predicted_points"})
+        .sort_values("predicted_points", ascending=False)
         .reset_index(drop=True)
     )
-    orig_champ["original_position"] = orig_champ.index + 1
+    hist["predicted_rank"] = hist.index + 1
 
-    sim_champ = (
-        all_races.groupby(["driver","driver_name"])["simulated_points"]
+    perf = (
+        year_df.groupby("driver")["rf_perfect_points"]
         .sum().reset_index()
-        .sort_values("simulated_points", ascending=False)
+        .rename(columns={"rf_perfect_points": "perfect_points"})
+        .sort_values("perfect_points", ascending=False)
         .reset_index(drop=True)
     )
-    sim_champ["simulated_position"] = sim_champ.index + 1
+    perf["perfect_rank"] = perf.index + 1
 
-    standings = orig_champ.merge(sim_champ, on=["driver","driver_name"])
-    standings["points_delta"]    = standings["simulated_points"] - standings["original_points"]
-    standings["position_change"] = standings["original_position"] - standings["simulated_position"]
-
-    return standings, all_races
-
-
-# ── Offline analysis (no Ergast) ──────────────────────────────────────────────
-# When the API is unavailable, we can still analyse pit strategy variance
-# from pitstops.csv alone and produce meaningful charts.
-
-def analyse_offline(year, pitstops_df, lap_df):
-    """
-    Full variance analysis using only pitstops.csv.
-    Returns (window_errors, exec_penalties, summary_stats).
-    """
-    print(f"  Running offline variance analysis for {year}...")
-    window_errors  = compute_pit_window_errors(pitstops_df, year)
-    window_errors  = compute_undercut_missed(window_errors)
-    exec_penalties = compute_stop_execution_penalties(pitstops_df, year)
-
-    if window_errors.empty:
-        print(f"  ✗ No pit data for {year}")
-        return window_errors, exec_penalties, {}
-
-    sw_era = get_software_era(year)
-    deg_penalty = get_tyre_deg_penalty(year)
-
-    total_driver_races = len(window_errors)
-    avg_window_err     = window_errors["avg_window_error_laps"].mean()
-    avg_penalty        = window_errors["penalty_s"].mean()
-    sw_saves           = avg_penalty * sw_era["window_correction"]
-    avg_exec_pen       = exec_penalties["exec_penalty_s"].mean() if not exec_penalties.empty else 0
-    avg_missed_uc      = window_errors["missed_undercut_penalty_s"].mean()
-
-    total_avg_penalty  = avg_penalty + avg_exec_pen + avg_missed_uc
-    total_sw_saves     = (
-        avg_penalty   * sw_era["window_correction"] +
-        avg_exec_pen  * sw_era["stop_time_correction"] +
-        avg_missed_uc * sw_era["undercut_awareness"]
+    standings = hist.merge(perf, on="driver")
+    standings["points_gain"] = (
+        standings["perfect_points"] - standings["predicted_points"]
+    ).round(1)
+    standings["rank_change"] = (
+        standings["predicted_rank"] - standings["perfect_rank"]
     )
 
-    stats = {
-        "year":             year,
-        "sw_era_label":     sw_era["label"],
-        "driver_races":     total_driver_races,
-        "avg_window_err":   round(avg_window_err, 2),
-        "avg_window_pen_s": round(avg_penalty, 2),
-        "avg_exec_pen_s":   round(avg_exec_pen, 2),
-        "avg_missed_uc_s":  round(avg_missed_uc, 2),
-        "total_avg_pen_s":  round(total_avg_penalty, 2),
-        "sw_saves_s":       round(total_sw_saves, 2),
-        "net_variance_s":   round(total_avg_penalty - total_sw_saves, 2),
-    }
+    actual = (
+        year_df.groupby("driver")["points_scored"]
+        .sum().reset_index()
+        .rename(columns={"points_scored": "actual_points"})
+    )
+    standings = standings.merge(actual, on="driver")
 
-    print(f"  Races analysed:        {window_errors['race'].nunique()}")
-    print(f"  Driver-races:          {total_driver_races}")
-    print(f"  Avg window error:      {avg_window_err:.2f} laps")
-    print(f"  Avg window penalty:    {avg_penalty:.2f}s")
-    print(f"  Avg exec penalty:      {avg_exec_pen:.2f}s")
-    print(f"  Avg missed undercut:   {avg_missed_uc:.2f}s")
-    print(f"  ─────────────────────────────────")
-    print(f"  Total avg penalty:     {total_avg_penalty:.2f}s")
-    print(f"  SW saves (modelled):   {total_sw_saves:.2f}s")
-    print(f"  Remaining variance:    {total_avg_penalty - total_sw_saves:.2f}s")
+    return standings
 
-    return window_errors, exec_penalties, stats
+
+# ── Multi-year sweep ───────────────────────────────────────────────────────────
+
+def run_sweep(dataset, years):
+    sweep = []
+
+    for year in years:
+        year_df = dataset[dataset["year"] == year]
+        if len(year_df) < 10:
+            print(f"  ⚠  {year}: insufficient data ({len(year_df)} rows) — skipping")
+            continue
+
+        standings = simulate_season(year_df)
+
+        pred_winner = standings.sort_values("predicted_points", ascending=False).iloc[0]
+        perf_winner = standings.sort_values("perfect_points",   ascending=False).iloc[0]
+        title_flips = pred_winner["driver"] != perf_winner["driver"]
+
+        era_label    = year_df["era_label"].iloc[0]
+        avg_variance = year_df[VARIANCE_FEATURES].sum(axis=1).mean()
+        avg_gain     = year_df["rf_points_gain"].mean()
+
+        print(f"\n  {year} — {era_label}")
+        print(f"    RF-predicted champion:      {pred_winner['driver']}")
+        print(f"    Perfect-strategy champion:  {perf_winner['driver']}")
+        print(f"    Title changes:              {'★ YES' if title_flips else 'no'}")
+        print(f"    Avg variance (s)/race:      {avg_variance:.2f}")
+        print(f"    Avg RF points gain:         {avg_gain:.2f}")
+
+        sweep.append({
+            "year":            year,
+            "era_label":       era_label,
+            "pred_winner":     pred_winner["driver"],
+            "perf_winner":     perf_winner["driver"],
+            "title_flips":     title_flips,
+            "avg_variance_s":  round(avg_variance, 2),
+            "avg_points_gain": round(avg_gain, 2),
+        })
+
+    return sweep
 
 
 # ── Plotting ───────────────────────────────────────────────────────────────────
 
-def setup_fig_style():
+def setup_style():
+    plt.style.use("dark_background")
     plt.rcParams.update({
         "font.family":      "monospace",
         "axes.facecolor":   COLOUR["card"],
         "figure.facecolor": COLOUR["bg"],
         "axes.edgecolor":   COLOUR["border"],
-        "axes.labelcolor":  COLOUR["muted"],
-        "xtick.color":      COLOUR["muted"],
-        "ytick.color":      COLOUR["muted"],
-        "grid.color":       COLOUR["border"],
-        "grid.linewidth":   0.5,
         "text.color":       COLOUR["text"],
-        "axes.titlecolor":  COLOUR["text"],
         "axes.titlesize":   11,
         "axes.labelsize":   9,
         "xtick.labelsize":  8,
         "ytick.labelsize":  8,
+        "grid.color":       COLOUR["border"],
+        "grid.linewidth":   0.5,
     })
 
 
-def plot_offline_season(year, window_errors, exec_penalties, sw_era):
-    """Dashboard for offline (no Ergast) single-season analysis."""
-    setup_fig_style()
+def plot_single_season(year, standings, year_df, outputs_dir=None):
+    if outputs_dir is None:
+        outputs_dir = os.path.join(_HERE, "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
+    setup_style()
     fig = plt.figure(figsize=(18, 10))
     fig.patch.set_facecolor(COLOUR["bg"])
-    gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.48, wspace=0.35)
+    gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35)
 
-    fig.text(0.02, 0.97,
-             f"F1 {year} — STRATEGY VARIANCE ANALYSIS",
+    era_label = year_df["era_label"].iloc[0]
+    fig.text(0.02, 0.97, f"F1 {year} — CHAMPIONSHIP SIMULATION",
              fontsize=16, fontweight="bold", color=COLOUR["text"],
              fontfamily="monospace", va="top")
     fig.text(0.02, 0.935,
-             f"Software era: {sw_era['label']}  ·  "
-             f"Window correction: {sw_era['window_correction']*100:.0f}%  ·  "
-             f"Stop-time correction: {sw_era['stop_time_correction']*100:.0f}%  ·  "
-             f"Undercut awareness: {sw_era['undercut_awareness']*100:.0f}%",
-             fontsize=8.5, color=COLOUR["muted"], fontfamily="monospace", va="top")
+             f"Era: {era_label}  ·  "
+             f"Method: RF counterfactual — variance features zeroed  ·  "
+             f"No hardcoded correction factors",
+             fontsize=8.5, color=COLOUR["muted"],
+             fontfamily="monospace", va="top")
 
-    yr_we = window_errors[window_errors["year"] == year]
-    yr_ep = exec_penalties[exec_penalties["year"] == year] if not exec_penalties.empty else pd.DataFrame()
+    top10   = standings.head(10)
+    drivers = [d[:14] for d in top10["driver"]]
+    x       = np.arange(len(top10))
+    w       = 0.28
 
-    # ── 1. Pit window error distribution ─────────────────────────────────────
+    # ── 1. Three-way points comparison ───────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, 0])
-    if not yr_we.empty:
-        errors = yr_we["avg_window_error_laps"]
-        ax1.hist(errors, bins=20, color=COLOUR["blue"], alpha=0.8, edgecolor=COLOUR["border"])
-        ax1.axvline(errors.mean(), color=COLOUR["amber"], linestyle="--",
-                    linewidth=1.5, label=f"Mean: {errors.mean():.1f} laps")
-        ax1.set_title("Pit Window Error Distribution")
-        ax1.set_xlabel("Laps from optimal")
-        ax1.set_ylabel("Driver-races")
-        ax1.legend(fontsize=8)
-        ax1.grid(alpha=0.3)
+    ax1.bar(x - w, top10["actual_points"],    width=w, color=COLOUR["muted"],
+            alpha=0.7, label="Actual historical")
+    ax1.bar(x,     top10["predicted_points"], width=w, color=COLOUR["blue"],
+            alpha=0.85, label="RF predicted")
+    ax1.bar(x + w, top10["perfect_points"],   width=w, color=COLOUR["green"],
+            alpha=0.85, label="Perfect strategy")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(drivers, rotation=30, ha="right", fontsize=7)
+    ax1.set_ylabel("Championship points")
+    ax1.set_title("Actual vs RF vs Perfect Strategy (Top 10)")
+    ax1.legend(fontsize=7)
+    ax1.grid(axis="y", alpha=0.3)
 
-    # ── 2. Penalty components per race (top 12 races) ─────────────────────
+    # ── 2. Points gain ────────────────────────────────────────────────────────
     ax2 = fig.add_subplot(gs[0, 1])
-    if not yr_we.empty:
-        race_pen = yr_we.groupby("race")["penalty_s"].mean().sort_values(ascending=False).head(12)
-        if not yr_ep.empty:
-            race_exec = yr_ep.groupby("race")["exec_penalty_s"].mean().reindex(race_pen.index, fill_value=0)
-        else:
-            race_exec = pd.Series(0, index=race_pen.index)
-        x = np.arange(len(race_pen))
-        ax2.bar(x, race_pen.values, color=COLOUR["amber"], alpha=0.85, label="Window penalty")
-        ax2.bar(x, race_exec.values, bottom=race_pen.values, color=COLOUR["red"], alpha=0.85, label="Exec penalty")
-        ax2.set_xticks(x)
-        ax2.set_xticklabels([r[:7] for r in race_pen.index], rotation=45, ha="right")
-        ax2.set_ylabel("Avg penalty (s)")
-        ax2.set_title("Strategy Penalty by Race")
-        ax2.legend(fontsize=7)
-        ax2.grid(axis="y", alpha=0.3)
+    gain_colors = [COLOUR["green"] if g >= 0 else COLOUR["red"]
+                   for g in top10["points_gain"]]
+    ax2.bar(x, top10["points_gain"], color=gain_colors, alpha=0.85)
+    ax2.axhline(0, color="white", linewidth=0.8)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(drivers, rotation=30, ha="right", fontsize=7)
+    ax2.set_ylabel("RF points gained (perfect − predicted)")
+    ax2.set_title("Points Gained from Perfect Strategy")
+    ax2.grid(axis="y", alpha=0.3)
 
-    # ── 3. Driver variance (top 10 worst / best) ──────────────────────────
+    # ── 3. Per-driver variance breakdown ──────────────────────────────────────
     ax3 = fig.add_subplot(gs[0, 2])
-    if not yr_we.empty:
-        drv = yr_we.groupby("driver")[["penalty_s","missed_undercut_penalty_s"]].mean()
-        drv["total"] = drv["penalty_s"] + drv["missed_undercut_penalty_s"]
-        drv = drv.sort_values("total", ascending=False).head(12)
-        y   = np.arange(len(drv))
-        ax3.barh(y, drv["penalty_s"], color=COLOUR["amber"], alpha=0.8, label="Window")
-        ax3.barh(y, drv["missed_undercut_penalty_s"], left=drv["penalty_s"],
-                 color=COLOUR["red"], alpha=0.8, label="Missed undercut")
-        ax3.set_yticks(y)
-        ax3.set_yticklabels([n[:14] for n in drv.index], fontsize=7)
-        ax3.set_xlabel("Total strategy penalty (s)")
-        ax3.set_title("Top 12 Strategy Penalty — by Driver")
-        ax3.legend(fontsize=7)
-        ax3.grid(axis="x", alpha=0.3)
+    drv_var = year_df.groupby("driver")[VARIANCE_FEATURES].mean()
+    drv_var["total"] = drv_var.sum(axis=1)
+    drv_var = drv_var.sort_values("total", ascending=False).head(10)
+    y3 = np.arange(len(drv_var))
+    ax3.barh(y3, drv_var["window_penalty_s"], color=COLOUR["amber"],
+             alpha=0.85, label="Window penalty")
+    ax3.barh(y3, drv_var["exec_penalty_s"],
+             left=drv_var["window_penalty_s"],
+             color=COLOUR["red"], alpha=0.85, label="Exec penalty")
+    ax3.set_yticks(y3)
+    ax3.set_yticklabels([n[:14] for n in drv_var.index], fontsize=7)
+    ax3.set_xlabel("Avg seconds per race")
+    ax3.set_title("Avg Strategy Variance by Driver")
+    ax3.legend(fontsize=7)
+    ax3.grid(axis="x", alpha=0.3)
 
-    # ── 4. Penalty breakdown pie ──────────────────────────────────────────
+    # ── 4. Championship rank change ───────────────────────────────────────────
     ax4 = fig.add_subplot(gs[1, 0])
-    if not yr_we.empty:
-        avg_w  = yr_we["penalty_s"].mean()
-        avg_uc = yr_we["missed_undercut_penalty_s"].mean()
-        avg_e  = yr_ep["exec_penalty_s"].mean() if not yr_ep.empty else 0
-        labels  = ["Window timing", "Missed undercut", "Slow pit stop"]
-        sizes   = [avg_w, avg_uc, avg_e]
-        colors  = [COLOUR["amber"], COLOUR["red"], COLOUR["blue"]]
-        sizes   = [max(0, s) for s in sizes]
-        if sum(sizes) > 0:
-            ax4.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%",
-                    textprops={"fontsize": 8, "color": COLOUR["text"]})
-        ax4.set_title("Variance Source Breakdown")
+    rank_colors = [COLOUR["green"] if r > 0 else COLOUR["red"] if r < 0
+                   else COLOUR["muted"] for r in top10["rank_change"]]
+    ax4.bar(x, top10["rank_change"], color=rank_colors, alpha=0.85)
+    ax4.axhline(0, color="white", linewidth=0.8)
+    ax4.set_xticks(x)
+    ax4.set_xticklabels(drivers, rotation=30, ha="right", fontsize=7)
+    ax4.set_ylabel("Championship positions gained")
+    ax4.set_title("Championship Rank Change (Perfect Strategy)")
+    ax4.grid(axis="y", alpha=0.3)
 
-    # ── 5. Software capability timeline ──────────────────────────────────
+    # ── 5. RF prediction quality scatter ──────────────────────────────────────
     ax5 = fig.add_subplot(gs[1, 1])
-    eras  = sorted(SOFTWARE_ERAS.keys())
-    wc    = [SOFTWARE_ERAS[y]["window_correction"]    for y in eras]
-    sc    = [SOFTWARE_ERAS[y]["stop_time_correction"] for y in eras]
-    uc    = [SOFTWARE_ERAS[y]["undercut_awareness"]   for y in eras]
-    vr    = [SOFTWARE_ERAS[y]["variance_reduction"]   for y in eras]
-
-    ax5.plot(eras, wc, color=COLOUR["amber"], linewidth=2, marker="o", ms=4, label="Window correction")
-    ax5.plot(eras, sc, color=COLOUR["blue"],  linewidth=2, marker="s", ms=4, label="Stop-time correction")
-    ax5.plot(eras, uc, color=COLOUR["red"],   linewidth=2, marker="^", ms=4, label="Undercut awareness")
-    ax5.plot(eras, vr, color=COLOUR["green"], linewidth=2.5, linestyle="--", marker="D", ms=4, label="Overall variance↓")
-    ax5.axvline(year, color="white", linestyle=":", linewidth=1.2, label=f"{year}")
-    ax5.set_xlabel("Year")
-    ax5.set_ylabel("Capability (0–1)")
-    ax5.set_title("Software Capability Timeline")
-    ax5.legend(fontsize=7, ncol=2)
+    ax5.scatter(year_df["points_scored"], year_df["rf_predicted_points"],
+                color=COLOUR["blue"], alpha=0.5, s=20, label="Actual vs RF")
+    ax5.scatter(year_df["points_scored"], year_df["rf_perfect_points"],
+                color=COLOUR["green"], alpha=0.5, s=20,
+                label="Actual vs Perfect")
+    lim = max(year_df["points_scored"].max(),
+              year_df["rf_perfect_points"].max()) + 2
+    ax5.plot([0, lim], [0, lim], color=COLOUR["muted"],
+             linestyle="--", linewidth=0.8)
+    ax5.set_xlabel("Actual points scored")
+    ax5.set_ylabel("RF predicted points")
+    ax5.set_title("RF Prediction Quality (this season)")
+    ax5.legend(fontsize=7)
     ax5.grid(alpha=0.3)
-    ax5.set_ylim(0, 1.05)
 
-    # ── 6. SW savings vs remaining variance ──────────────────────────────
+    # ── 6. Season summary ─────────────────────────────────────────────────────
     ax6 = fig.add_subplot(gs[1, 2])
-    if not yr_we.empty:
-        # Per driver: total penalty vs SW-corrected penalty
-        drv_pen   = yr_we.groupby("driver")[["penalty_s","missed_undercut_penalty_s"]].mean()
-        drv_pen["total"] = drv_pen["penalty_s"] + drv_pen["missed_undercut_penalty_s"]
-        ep_mean   = yr_ep.groupby("driver")["exec_penalty_s"].mean() if not yr_ep.empty else pd.Series(dtype=float)
-        drv_pen["exec"] = drv_pen.index.map(lambda d: ep_mean.get(d, 0))
-        drv_pen["grand_total"] = drv_pen["total"] + drv_pen["exec"]
+    ax6.axis("off")
+    pred_winner = standings.sort_values("predicted_points", ascending=False).iloc[0]
+    perf_winner = standings.sort_values("perfect_points",   ascending=False).iloc[0]
+    title_flips = pred_winner["driver"] != perf_winner["driver"]
 
-        sw  = get_software_era(year)
-        drv_pen["sw_saved"] = (
-            drv_pen["penalty_s"]   * sw["window_correction"] +
-            drv_pen["missed_undercut_penalty_s"] * sw["undercut_awareness"] +
-            drv_pen["exec"]        * sw["stop_time_correction"]
-        )
-        drv_pen["remaining"] = drv_pen["grand_total"] - drv_pen["sw_saved"]
+    lines = [
+        f"Season:              {year}",
+        f"Era:                 {era_label}",
+        "",
+        f"RF-predicted winner:",
+        f"  {pred_winner['driver']}",
+        f"  {pred_winner['predicted_points']:.1f} pts",
+        "",
+        f"Perfect-strategy winner:",
+        f"  {perf_winner['driver']}",
+        f"  {perf_winner['perfect_points']:.1f} pts",
+        "",
+        f"Title changes: {'★ YES' if title_flips else 'No'}",
+        "",
+        f"Avg variance/race:",
+        f"  {year_df[VARIANCE_FEATURES].sum(axis=1).mean():.2f}s",
+        f"Avg RF points gain:",
+        f"  {year_df['rf_points_gain'].mean():.2f}",
+    ]
+    for i, line in enumerate(lines):
+        color = COLOUR["amber"] if "★" in line else COLOUR["text"]
+        ax6.text(0.05, 0.97 - i * 0.062, line,
+                 transform=ax6.transAxes, fontsize=8.5,
+                 fontfamily="monospace", color=color, va="top")
+    ax6.set_title("Season Summary")
 
-        x = np.arange(min(12, len(drv_pen)))
-        top = drv_pen.sort_values("grand_total", ascending=False).head(12)
-        ax6.bar(x, top["grand_total"].values, color=COLOUR["muted"],    alpha=0.6, label="Total penalty")
-        ax6.bar(x, top["remaining"].values,   color=COLOUR["red"],      alpha=0.9, label="After SW correction")
-        ax6.set_xticks(x)
-        ax6.set_xticklabels([n[:8] for n in top.index], rotation=45, ha="right", fontsize=7)
-        ax6.set_ylabel("Penalty (s)")
-        ax6.set_title("Total Penalty vs SW-Corrected Penalty")
-        ax6.legend(fontsize=7)
-        ax6.grid(axis="y", alpha=0.3)
-
-    outfile = f"f1_strategy_{year}.png"
+    outfile = os.path.join(outputs_dir, f"f1_simulation_{year}.png")
     plt.savefig(outfile, dpi=150, bbox_inches="tight", facecolor=COLOUR["bg"])
     print(f"  ✓ Saved {outfile}")
     plt.show()
     plt.close()
 
 
-def plot_sweep(sweep_stats, pitstops_df):
-    """Multi-era variance reduction overview."""
-    setup_fig_style()
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    fig.patch.set_facecolor(COLOUR["bg"])
-    fig.suptitle("F1 STRATEGY VARIANCE ACROSS ERAS",
-                 fontsize=15, fontweight="bold", color=COLOUR["text"],
-                 fontfamily="monospace")
-
-    df = pd.DataFrame(sweep_stats)
+def plot_sweep(sweep_results, dataset, outputs_dir=None):
+    if outputs_dir is None:
+        outputs_dir = os.path.join(_HERE, "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
+    setup_style()
+    df    = pd.DataFrame(sweep_results)
     years = df["year"].tolist()
 
-    # ── 1. Total penalty over time ────────────────────────────────────────
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    fig.patch.set_facecolor(COLOUR["bg"])
+    fig.suptitle(
+        "F1 CHAMPIONSHIP SIMULATION — PERFECT STRATEGY COUNTERFACTUAL",
+        fontsize=13, fontweight="bold", color=COLOUR["text"],
+        fontfamily="monospace"
+    )
+
+    # ── 1. Avg variance over time ─────────────────────────────────────────────
     ax = axes[0, 0]
-    ax.bar(years, df["total_avg_pen_s"], color=COLOUR["blue"],   alpha=0.8, label="Total penalty")
-    ax.plot(years, df["net_variance_s"], color=COLOUR["green"],  linewidth=2.5,
-            marker="o", markersize=5, label="After SW correction")
-    ax.set_title("Average Strategy Penalty Per Driver-Race")
+    ax.bar(years, df["avg_variance_s"], color=COLOUR["blue"],
+           alpha=0.8, label="Avg strategy variance (s)")
+    ax.set_title("Average Strategy Variance per Driver-Race")
     ax.set_xlabel("Year"); ax.set_ylabel("Seconds")
     ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
 
-    # ── 2. Penalty breakdown stacked ─────────────────────────────────────
+    # ── 2. Avg RF points gain over time ──────────────────────────────────────
     ax = axes[0, 1]
-    ax.bar(years, df["avg_window_pen_s"], color=COLOUR["amber"], alpha=0.85, label="Window timing")
-    ax.bar(years, df["avg_exec_pen_s"],   bottom=df["avg_window_pen_s"],
-           color=COLOUR["red"],   alpha=0.85, label="Slow pit stop")
-    ax.bar(years, df["avg_missed_uc_s"],
-           bottom=df["avg_window_pen_s"] + df["avg_exec_pen_s"],
-           color=COLOUR["blue"],  alpha=0.85, label="Missed undercut")
-    ax.set_title("Penalty Source Composition Over Years")
-    ax.set_xlabel("Year"); ax.set_ylabel("Seconds")
-    ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
+    ax.fill_between(years, df["avg_points_gain"], alpha=0.25,
+                    color=COLOUR["green"])
+    ax.plot(years, df["avg_points_gain"], color=COLOUR["green"],
+            linewidth=2.5, marker="o", markersize=5)
+    ax.set_title("Avg RF Points Gained from Perfect Strategy")
+    ax.set_xlabel("Year"); ax.set_ylabel("Points per driver-race")
+    ax.grid(axis="y", alpha=0.3)
 
-    # ── 3. SW savings over time ───────────────────────────────────────────
+    # ── 3. Title flip seasons ─────────────────────────────────────────────────
     ax = axes[1, 0]
-    ax.fill_between(years, df["sw_saves_s"], alpha=0.25, color=COLOUR["green"])
-    ax.plot(years, df["sw_saves_s"], color=COLOUR["green"], linewidth=2.5,
-            marker="o", markersize=5, label="SW saves (s)")
-    ax.set_title("Average Time Saved Per Driver-Race by Software")
-    ax.set_xlabel("Year"); ax.set_ylabel("Seconds")
-    ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
+    flip_years    = [r["year"] for r in sweep_results if r["title_flips"]]
+    no_flip_years = [r["year"] for r in sweep_results if not r["title_flips"]]
+    ax.scatter(no_flip_years, [0] * len(no_flip_years),
+               color=COLOUR["muted"], s=60, zorder=3, label="Same champion")
+    ax.scatter(flip_years, [0] * len(flip_years),
+               color=COLOUR["amber"], s=140, marker="*", zorder=4,
+               label="Title would change")
+    for r in sweep_results:
+        if r["title_flips"]:
+            ax.annotate(r["perf_winner"][:10], (r["year"], 0),
+                        textcoords="offset points", xytext=(0, 14),
+                        fontsize=7, color=COLOUR["amber"],
+                        ha="center", fontfamily="monospace")
+    ax.set_title("Seasons Where Perfect Strategy Changes the Champion")
+    ax.set_xlabel("Year"); ax.set_yticks([])
+    ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
 
-    # ── 4. Software capability model ─────────────────────────────────────
+    # ── 4. Variance distribution by era (box plot) ───────────────────────────
     ax = axes[1, 1]
-    eras = sorted(SOFTWARE_ERAS.keys())
-    ax.plot(eras, [SOFTWARE_ERAS[y]["window_correction"]    for y in eras],
-            color=COLOUR["amber"], linewidth=2, marker="o", ms=4, label="Window correction")
-    ax.plot(eras, [SOFTWARE_ERAS[y]["stop_time_correction"] for y in eras],
-            color=COLOUR["blue"],  linewidth=2, marker="s", ms=4, label="Stop-time correction")
-    ax.plot(eras, [SOFTWARE_ERAS[y]["undercut_awareness"]   for y in eras],
-            color=COLOUR["red"],   linewidth=2, marker="^", ms=4, label="Undercut awareness")
-    ax.plot(eras, [SOFTWARE_ERAS[y]["variance_reduction"]   for y in eras],
-            color=COLOUR["green"], linewidth=2.5, linestyle="--", label="Overall variance↓")
-
-    for start, end, label in [(1950,1983,"Pre-telemetry"),(1984,1999,"Telemetry"),
-                               (2000,2011,"Simulation"),(2012,2024,"AI/ML")]:
-        ax.axvspan(start, end, alpha=0.04, color=COLOUR["blue"])
-        ax.text((start+end)/2, 0.02, label, ha="center", fontsize=7,
-                color=COLOUR["muted"])
-    ax.set_xlabel("Year"); ax.set_ylabel("Capability (0–1)")
-    ax.set_title("Software Capability Growth by Dimension")
-    ax.legend(fontsize=7, ncol=2); ax.grid(alpha=0.3)
-    ax.set_ylim(0, 1.05)
+    dataset["total_variance"] = dataset[VARIANCE_FEATURES].sum(axis=1)
+    era_groups = dataset.groupby("era_label")["total_variance"]
+    era_labels_sorted = (
+        dataset.drop_duplicates("era_label")
+        .sort_values("year")[["year", "era_label"]]
+        .set_index("era_label")["year"]
+        .sort_values().index.tolist()
+    )
+    data_by_era = [
+        era_groups.get_group(e).values
+        for e in era_labels_sorted
+        if e in era_groups.groups
+    ]
+    bp = ax.boxplot(data_by_era, patch_artist=True, notch=False)
+    for patch in bp["boxes"]:
+        patch.set_facecolor(COLOUR["blue"])
+        patch.set_alpha(0.6)
+    for median in bp["medians"]:
+        median.set_color(COLOUR["amber"])
+        median.set_linewidth(2)
+    ax.set_xticklabels(
+        [e[:12] for e in era_labels_sorted],
+        rotation=20, ha="right", fontsize=7
+    )
+    ax.set_ylabel("Total variance (s) per driver-race")
+    ax.set_title("Strategy Variance Distribution by Era")
+    ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("f1_era_sweep.png", dpi=150, bbox_inches="tight", facecolor=COLOUR["bg"])
-    print("  ✓ Saved f1_era_sweep.png")
+    out_path = os.path.join(outputs_dir, "f1_sweep_simulation.png")
+    plt.savefig(out_path, dpi=150,
+                bbox_inches="tight", facecolor=COLOUR["bg"])
+    print(f"  ✓ Saved {out_path}")
     plt.show()
     plt.close()
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Public API — called from analyser.py after rf.py trains the model ──────────
 
-def analyse_year_full(year, pitstops_df, lap_df, offline=False):
-    """Run full analysis for a single year."""
-    print(f"\n{'='*60}")
-    print(f"  Analysing {year}")
-    print(f"{'='*60}")
+def run(dataset, model, no_plot=False, outputs_dir=None):
+    """
+    Entry point when called from the analyser.py pipeline.
+    dataset — the full rf_dataset DataFrame already in memory
+    model   — the trained RandomForestRegressor from rf.py
+    """
+    if outputs_dir is None:
+        outputs_dir = os.path.join(_HERE, "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
 
-    sw_era = get_software_era(year)
-    print(f"  Software era:   {sw_era['label']}")
-    print(f"  Window corr:    {sw_era['window_correction']*100:.0f}%")
-    print(f"  Stop-time corr: {sw_era['stop_time_correction']*100:.0f}%")
-    print(f"  Undercut aware: {sw_era['undercut_awareness']*100:.0f}%")
+    print("\n── Championship Simulation ──────────────────────────────────")
+    dataset = predict_perfect_strategy(dataset, model)
+    years   = sorted(dataset["year"].unique())
+    sweep   = run_sweep(dataset, years)
 
-    window_errors  = compute_pit_window_errors(pitstops_df, year)
-    window_errors  = compute_undercut_missed(window_errors)
-    exec_penalties = compute_stop_execution_penalties(pitstops_df, year)
+    if sweep:
+        df = pd.DataFrame(sweep)
+        out_path = os.path.join(outputs_dir, "f1_simulation_sweep.csv")
+        df.to_csv(out_path, index=False)
+        print(f"\n  ✓ Saved {out_path}")
 
-    _, _, stats = analyse_offline(year, pitstops_df, lap_df)
+        flips = [r for r in sweep if r["title_flips"]]
+        print(f"\n  SEASONS WHERE TITLE WOULD CHANGE: "
+              f"{len(flips)}/{len(sweep)}")
+        for r in flips:
+            print(f"    {r['year']}  {r['pred_winner']:<20} → {r['perf_winner']}")
 
-    if not offline:
-        print(f"\n  Fetching race results from Ergast...")
-        race_results = fetch_season_results(year)
-        if race_results.empty:
-            print(f"  ⚠  No Ergast data — charting offline analysis only")
-            return window_errors, exec_penalties, stats, None, None
+        if not no_plot:
+            plot_sweep(sweep, dataset, outputs_dir)
 
-        standings, all_races = simulate_corrected_season(
-            race_results, window_errors, exec_penalties, year, sw_era
-        )
+    return sweep
 
-        if not standings.empty:
-            print(f"\n  Top 5 standings comparison:")
-            print(f"  {'Driver':<20} {'Hist pts':>8} {'SW pts':>8} {'Delta':>6} {'Pos Δ':>6}")
-            print(f"  {'-'*52}")
-            for _, row in standings.head(5).iterrows():
-                print(f"  {row['driver_name']:<20} "
-                      f"{row['original_points']:>8.0f} "
-                      f"{row['simulated_points']:>8.0f} "
-                      f"{row['points_delta']:>+6.0f} "
-                      f"{row['position_change']:>+6.0f}")
 
-            hc = standings.iloc[0]["driver_name"]
-            sc_name = standings.sort_values("simulated_points", ascending=False).iloc[0]["driver_name"]
-            if hc != sc_name:
-                print(f"\n  ★ CHAMPIONSHIP OUTCOME CHANGES!")
-                print(f"    Historical champion:    {hc}")
-                print(f"    Software-aided champion:{sc_name}")
-            else:
-                print(f"\n  ✓ Same champion: {hc}")
-
-        return window_errors, exec_penalties, stats, standings, all_races
-
-    return window_errors, exec_penalties, stats, None, None
-
+# ── Standalone entry point ─────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="F1 Strategy Variance Analyser v2 — LUT University Thesis"
+        description="F1 Championship Simulator v4 — LUT University Thesis"
     )
-    parser.add_argument("--year",    type=int, default=2010)
-    parser.add_argument("--mode",    choices=["single","sweep"], default="single")
-    parser.add_argument("--start",   type=int, default=1994)
-    parser.add_argument("--end",     type=int, default=2010)
-    parser.add_argument("--offline", action="store_true",
-                        help="Skip Ergast API, use pitstops.csv only")
-    parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--year",       type=int,  default=None)
+    parser.add_argument("--start",      type=int,  default=1994)
+    parser.add_argument("--end",        type=int,  default=2024)
+    parser.add_argument("--dataset",    type=str,  default=RF_DATASET_CSV)
+    parser.add_argument("--outputs",    type=str,  default=OUTPUTS_DIR,
+                        help="Directory for output files (default: ./outputs)")
+    parser.add_argument("--no-plot",    action="store_true")
     args = parser.parse_args()
 
-    print("\n  F1 Strategy Variance Analyser  v2.0")
-    print("  LUT University — Bachelor's Thesis\n")
+    outputs_dir = args.outputs
+    os.makedirs(outputs_dir, exist_ok=True)
 
-    pitstops_df = load_pitstops_csv(PITSTOPS_CSV)
-    lap_df      = load_lap_progression(LAP_TIMES_XL)
-    print(f"  Pit stops: {len(pitstops_df)} records "
-          f"({pitstops_df['Year'].min() if not pitstops_df.empty else 'N/A'}–"
-          f"{pitstops_df['Year'].max() if not pitstops_df.empty else 'N/A'})")
-    print(f"  Lap times: {len(lap_df)} years")
+    print("\n  F1 Championship Simulator  v4.0")
+    print("  LUT University — Bachelor's Thesis")
+    print("  Method: RF counterfactual — no hardcoded correction factors\n")
 
-    if args.mode == "single":
-        we, ep, stats, standings, all_races = analyse_year_full(
-            args.year, pitstops_df, lap_df, offline=args.offline
-        )
+    if not os.path.exists(args.dataset):
+        print(f"  ✗ Dataset not found: {args.dataset}")
+        print("    Run analyser.py first to generate f1_rf_dataset.csv")
+        return
+
+    dataset = pd.read_csv(args.dataset)
+    print(f"  ✓ Loaded dataset: {len(dataset)} driver-race rows")
+    print(f"    Years:   {dataset['year'].min()}–{dataset['year'].max()}")
+    print(f"    Drivers: {dataset['driver'].nunique()}")
+
+    print("\n── Training RF model ────────────────────────────────────────")
+    model = train_model(dataset)
+
+    print("\n── Generating counterfactual predictions ────────────────────")
+    dataset = predict_perfect_strategy(dataset, model)
+
+    if args.year is not None:
+        year_df = dataset[dataset["year"] == args.year]
+        if year_df.empty:
+            print(f"  ✗ No data for {args.year}")
+            return
+
+        print(f"\n── Simulating {args.year} ───────────────────────────────────")
+        standings = simulate_season(year_df)
+
+        pred_winner = standings.sort_values("predicted_points", ascending=False).iloc[0]
+        perf_winner = standings.sort_values("perfect_points",   ascending=False).iloc[0]
+        title_flips = pred_winner["driver"] != perf_winner["driver"]
+
+        print(f"\n  Era: {year_df['era_label'].iloc[0]}")
+        print(f"\n  {'Driver':<20} {'Actual':>7} {'RF pred':>8} "
+              f"{'Perfect':>8} {'Gain':>6} {'Rank Δ':>7}")
+        print(f"  {'-'*60}")
+        for _, row in standings.head(10).iterrows():
+            print(f"  {row['driver']:<20} "
+                  f"{row['actual_points']:>7.0f} "
+                  f"{row['predicted_points']:>8.1f} "
+                  f"{row['perfect_points']:>8.1f} "
+                  f"{row['points_gain']:>+6.1f} "
+                  f"{row['rank_change']:>+7.0f}")
+
+        if title_flips:
+            print(f"\n  ★ CHAMPIONSHIP OUTCOME CHANGES!")
+            print(f"    RF-predicted champion:     {pred_winner['driver']} "
+                  f"({pred_winner['predicted_points']:.1f} pts)")
+            print(f"    Perfect-strategy champion: {perf_winner['driver']} "
+                  f"({perf_winner['perfect_points']:.1f} pts)")
+        else:
+            print(f"\n  ✓ Same champion: {pred_winner['driver']}")
+
         if not args.no_plot:
-            sw_era = get_software_era(args.year)
-            plot_offline_season(args.year, we, ep, sw_era)
+            plot_single_season(args.year, standings, year_df, outputs_dir)
 
-    elif args.mode == "sweep":
-        all_stats = []
-        for year in range(args.start, args.end + 1):
-            we, ep, stats, _, _ = analyse_year_full(
-                year, pitstops_df, lap_df, offline=True
-            )
-            if stats:
-                all_stats.append(stats)
+    else:
+        years = sorted(dataset[
+            dataset["year"].between(args.start, args.end)
+        ]["year"].unique())
 
-        if all_stats and not args.no_plot:
-            plot_sweep(all_stats, pitstops_df)
+        print(f"\n── Sweeping {args.start}–{args.end} "
+              f"({len(years)} seasons) ───────────────────")
 
-        if all_stats:
-            df = pd.DataFrame(all_stats)
-            df.to_csv("f1_sweep_summary.csv", index=False)
-            print("\n  ✓ Saved f1_sweep_summary.csv")
-            print("\n  SWEEP SUMMARY:")
-            print(df[["year","sw_era_label","total_avg_pen_s","sw_saves_s","net_variance_s"]].to_string(index=False))
+        sweep_results = run_sweep(dataset, years)
+
+        if sweep_results:
+            df = pd.DataFrame(sweep_results)
+            out_path = os.path.join(outputs_dir, "f1_simulation_sweep.csv")
+            df.to_csv(out_path, index=False)
+            print(f"\n  ✓ Saved {out_path}")
+
+            flips = [r for r in sweep_results if r["title_flips"]]
+            print(f"\n  SEASONS WHERE TITLE WOULD CHANGE: "
+                  f"{len(flips)}/{len(sweep_results)}")
+            for r in flips:
+                print(f"    {r['year']}  {r['pred_winner']:<20} "
+                      f"→  {r['perf_winner']}")
+
+            if not args.no_plot:
+                plot_sweep(sweep_results, dataset, outputs_dir)
 
 
 if __name__ == "__main__":
