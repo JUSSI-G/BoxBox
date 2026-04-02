@@ -216,6 +216,8 @@ def results():
                         except ValueError:
                             pass
                 row["title_flips"] = row.get("title_flips", "False") == "True"
+                row["pred_flips"]  = row.get("pred_flips",  "False") == "True"
+                row["perf_flips"]  = row.get("perf_flips",  "False") == "True"
                 out["sweep"].append(row)
 
     if os.path.exists(dataset_path):

@@ -90,6 +90,44 @@ VARIANCE_FEATURES = [
     "exec_penalty_s",
 ]
 
+# ── Real-world F1 champions (ground truth) ────────────────────────────────────
+# Used in run_sweep() to populate real_winner — NOT derived from the dataset,
+# because actual_points in the RF dataset are race-level and may not sum to the
+# correct championship total due to data coverage gaps and driver name variants.
+REAL_CHAMPIONS = {
+    1994: "Michael Schumacher",
+    1995: "Michael Schumacher",
+    1996: "Damon Hill",
+    1997: "Jacques Villeneuve",
+    1998: "Mika Häkkinen",
+    1999: "Mika Häkkinen",
+    2000: "Michael Schumacher",
+    2001: "Michael Schumacher",
+    2002: "Michael Schumacher",
+    2003: "Michael Schumacher",
+    2004: "Michael Schumacher",
+    2005: "Fernando Alonso",
+    2006: "Fernando Alonso",
+    2007: "Kimi Räikkönen",
+    2008: "Lewis Hamilton",
+    2009: "Jenson Button",
+    2010: "Sebastian Vettel",
+    2011: "Sebastian Vettel",
+    2012: "Sebastian Vettel",
+    2013: "Sebastian Vettel",
+    2014: "Lewis Hamilton",
+    2015: "Lewis Hamilton",
+    2016: "Nico Rosberg",
+    2017: "Lewis Hamilton",
+    2018: "Lewis Hamilton",
+    2019: "Lewis Hamilton",
+    2020: "Lewis Hamilton",
+    2021: "Max Verstappen",
+    2022: "Max Verstappen",
+    2023: "Max Verstappen",
+    2024: "Max Verstappen",
+}
+
 COLOUR = {
     "red":    "#e8003d",
     "amber":  "#ffb800",
@@ -240,24 +278,36 @@ def run_sweep(dataset, years):
 
         pred_winner = standings.sort_values("predicted_points", ascending=False).iloc[0]
         perf_winner = standings.sort_values("perfect_points",   ascending=False).iloc[0]
+
+        # Ground-truth champion from lookup — not derived from actual_points
+        # (race-level sums are unreliable due to data coverage gaps).
+        real_champ  = REAL_CHAMPIONS.get(year, "Unknown")
+
+        pred_flips  = pred_winner["driver"] != real_champ
+        perf_flips  = perf_winner["driver"] != real_champ
         title_flips = pred_winner["driver"] != perf_winner["driver"]
 
         era_label    = year_df["era_label"].iloc[0]
         avg_variance = year_df[VARIANCE_FEATURES].sum(axis=1).mean()
         avg_gain     = year_df["rf_points_gain"].mean()
 
-        print(f"\n  {year} — {era_label}")
-        print(f"    RF-predicted champion:      {pred_winner['driver']}")
-        print(f"    Perfect-strategy champion:  {perf_winner['driver']}")
-        print(f"    Title changes:              {'★ YES' if title_flips else 'no'}")
+        print(f"\n  {year} -- {era_label}")
+        print(f"    Real champion:              {real_champ}")
+        print(f"    RF-predicted champion:      {pred_winner['driver']}  "
+              f"{'* PREDICTION CHANGES' if pred_flips else ''}")
+        print(f"    Perfect-strategy champion:  {perf_winner['driver']}  "
+              f"{'* CHAMPION CHANGES'   if perf_flips else ''}")
         print(f"    Avg variance (s)/race:      {avg_variance:.2f}")
         print(f"    Avg RF points gain:         {avg_gain:.2f}")
 
         sweep.append({
             "year":            year,
             "era_label":       era_label,
+            "real_winner":     real_champ,
             "pred_winner":     pred_winner["driver"],
             "perf_winner":     perf_winner["driver"],
+            "pred_flips":      pred_flips,
+            "perf_flips":      perf_flips,
             "title_flips":     title_flips,
             "avg_variance_s":  round(avg_variance, 2),
             "avg_points_gain": round(avg_gain, 2),
@@ -539,11 +589,14 @@ def run(dataset, model, no_plot=False, outputs_dir=None):
         df.to_csv(out_path, index=False)
         print(f"\n  ✓ Saved {out_path}")
 
-        flips = [r for r in sweep if r["title_flips"]]
-        print(f"\n  SEASONS WHERE TITLE WOULD CHANGE: "
-              f"{len(flips)}/{len(sweep)}")
-        for r in flips:
-            print(f"    {r['year']}  {r['pred_winner']:<20} → {r['perf_winner']}")
+        pred_flips = [r for r in sweep if r["pred_flips"]]
+        perf_flips = [r for r in sweep if r["perf_flips"]]
+        print(f"\n  PREDICTION CHANGES (RF != real):    {len(pred_flips)}/{len(sweep)}")
+        for r in pred_flips:
+            print(f"    {r['year']}  real: {r['real_winner']:<22} RF: {r['pred_winner']}")
+        print(f"\n  CHAMPION CHANGES (perfect != real): {len(perf_flips)}/{len(sweep)}")
+        for r in perf_flips:
+            print(f"    {r['year']}  real: {r['real_winner']:<22} perfect: {r['perf_winner']}")
 
         if not no_plot:
             plot_sweep(sweep, dataset, outputs_dir)
@@ -642,12 +695,14 @@ def main():
             df.to_csv(out_path, index=False)
             print(f"\n  ✓ Saved {out_path}")
 
-            flips = [r for r in sweep_results if r["title_flips"]]
-            print(f"\n  SEASONS WHERE TITLE WOULD CHANGE: "
-                  f"{len(flips)}/{len(sweep_results)}")
-            for r in flips:
-                print(f"    {r['year']}  {r['pred_winner']:<20} "
-                      f"→  {r['perf_winner']}")
+            pred_flips = [r for r in sweep_results if r["pred_flips"]]
+            perf_flips = [r for r in sweep_results if r["perf_flips"]]
+            print(f"\n  PREDICTION CHANGES (RF != real):    {len(pred_flips)}/{len(sweep_results)}")
+            for r in pred_flips:
+                print(f"    {r['year']}  real: {r['real_winner']:<22} RF: {r['pred_winner']}")
+            print(f"\n  CHAMPION CHANGES (perfect != real): {len(perf_flips)}/{len(sweep_results)}")
+            for r in perf_flips:
+                print(f"    {r['year']}  real: {r['real_winner']:<22} perfect: {r['perf_winner']}")
 
             if not args.no_plot:
                 plot_sweep(sweep_results, dataset, outputs_dir)

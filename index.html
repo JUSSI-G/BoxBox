@@ -79,6 +79,7 @@ main{overflow-y:auto}
 .champ-table tr:hover td{background:var(--card)}
 .flip-row td{background:rgba(255,184,0,.04)}
 .flip-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 8px;border:1px solid var(--amber);color:var(--amber);display:inline-block}
+.pred-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 8px;border:1px solid var(--blue);color:var(--blue);display:inline-block}
 .era-pill{font-family:var(--mono);font-size:9px;padding:2px 8px;border:1px solid var(--border);color:var(--muted);display:inline-block}
 .img-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 .img-card{background:var(--card);border:1px solid var(--border);overflow:hidden;border-radius:2px}
@@ -106,13 +107,7 @@ h2 em{font-style:normal;color:var(--amber)}
 </head>
 <body>
 <header>
-  <div class="logo">F1_STRATEGY_SIM <span>// LUT THESIS</span></div>
-  <nav>
-    <a href="#" onclick="showTab('run');return false">Terminal</a>
-    <a href="#" onclick="showTab('results');return false">Results</a>
-    <a href="#" onclick="showTab('charts');return false">Charts</a>
-    <a href="#" onclick="showTab('pipeline');return false">Pipeline</a>
-  </nav>
+  <div class="logo">BoxBox</div>
   <div class="header-status">
     <div class="status-dot" id="statusDot"></div>
     <span id="statusText">idle</span>
@@ -314,7 +309,8 @@ function loadResults(){
 function renderResults(d){
   const el=document.getElementById('resultsContent');
   if(!d.sweep||d.sweep.length===0){el.innerHTML='<div class="placeholder"><div class="ph-icon">&#9711;</div><p>No results yet. Run the pipeline first.</p></div>';return}
-  const flips=d.sweep.filter(r=>r.title_flips).length;
+  const predFlips=d.sweep.filter(r=>r.pred_flips).length;
+  const perfFlips=d.sweep.filter(r=>r.perf_flips).length;
   const total=d.sweep.length;
   const avgV=(d.sweep.reduce((s,r)=>s+(r.avg_variance_s||0),0)/total).toFixed(2);
   const avgG=(d.sweep.reduce((s,r)=>s+(r.avg_points_gain||0),0)/total).toFixed(2);
@@ -322,21 +318,23 @@ function renderResults(d){
     <div class="results-grid">
       <div class="result-card"><div class="result-label">Seasons analysed</div><div class="result-value blue">${total}</div></div>
       <div class="result-card"><div class="result-label">Driver-race rows</div><div class="result-value amber">${d.dataset_rows.toLocaleString()}</div></div>
-      <div class="result-card"><div class="result-label">Titles that would change</div><div class="result-value ${flips>0?'red':'green'}">${flips}</div></div>
-      <div class="result-card"><div class="result-label">Avg variance / race</div><div class="result-value">${avgV}<span style="font-size:14px;color:var(--muted)">s</span></div></div>
-      <div class="result-card"><div class="result-label">Avg RF points gain</div><div class="result-value green">${avgG}</div></div>
       <div class="result-card"><div class="result-label">Hardcoded corrections</div><div class="result-value green">0</div></div>
+      <div class="result-card"><div class="result-label">Avg variance / race</div><div class="result-value">${avgV}<span style="font-size:14px;color:var(--muted)">s</span></div></div>
+      <div class="result-card"><div class="result-label">Prediction changes (RF &ne; real)</div><div class="result-value ${predFlips>0?'blue':'green'}">${predFlips}</div></div>
+      <div class="result-card"><div class="result-label">Champion changes (perfect &ne; real)</div><div class="result-value ${perfFlips>0?'red':'green'}">${perfFlips}</div></div>
     </div>
     <table class="champ-table">
-      <thead><tr><th>Year</th><th>Era</th><th>RF champion</th><th>Perfect-strategy champion</th><th>Avg variance</th><th>RF pts gain</th><th></th></tr></thead>
-      <tbody>${d.sweep.map(r=>`<tr class="${r.title_flips?'flip-row':''}">
+      <thead><tr><th>Year</th><th>Era</th><th>Real champion</th><th>RF champion</th><th>Perfect-strategy champion</th><th>Avg variance</th><th>RF pts gain</th><th>Prediction</th><th>Champion</th></tr></thead>
+      <tbody>${d.sweep.map(r=>`<tr class="${r.perf_flips?'flip-row':''}">
         <td style="font-family:var(--mono);font-weight:600">${r.year}</td>
         <td><span class="era-pill">${r.era_label}</span></td>
-        <td>${r.pred_winner}</td>
-        <td style="color:${r.title_flips?'var(--amber)':'inherit'}">${r.perf_winner}</td>
+        <td style="color:var(--text)">${r.real_winner||'—'}</td>
+        <td style="color:${r.pred_flips?'var(--blue)':'inherit'}">${r.pred_winner}</td>
+        <td style="color:${r.perf_flips?'var(--amber)':'inherit'}">${r.perf_winner}</td>
         <td style="font-family:var(--mono)">${(r.avg_variance_s||0).toFixed(2)}s</td>
         <td style="font-family:var(--mono)">${(r.avg_points_gain||0).toFixed(2)}</td>
-        <td>${r.title_flips?'<span class="flip-badge">&#9733; CHANGES</span>':''}</td>
+        <td>${r.pred_flips?'<span class="pred-badge">&#9670; CHANGES</span>':''}</td>
+        <td>${r.perf_flips?'<span class="flip-badge">&#9733; CHANGES</span>':''}</td>
       </tr>`).join('')}</tbody>
     </table>`
 }
