@@ -1,30 +1,20 @@
 """
-F1 Strategy Outcome Predictor — Random Forest
-===============================================
+F1 Strategy Outcome Predictor — XGBoost
+=========================================
 Bachelor's Thesis Tool — LUT University
 "The impact of software engineering on strategy development in Formula One"
 
-RESEARCH QUESTION THIS ANSWERS:
-    "Does strategy variance predict race outcome, and does this relationship
-    change across software eras — indicating that software reduced the impact
-    of strategy errors over time?"
+XGBoost model for predicting race points from strategy variance features.
+Default model — use rf.py for Random Forest baseline comparison.
 
-HOW IT WORKS:
-    1. Build a dataset: one row per driver per race (1994-2024)
-       Features: strategy variance metrics + grid position + era
-       Target:   points scored that race
-
-    2. Train a Random Forest on 1994-2011 data
-
-    3. Test on 2012-2024 data
-       - Feature importance shows how much strategy variance matters vs car
-
-    4. Train separate models per era and compare feature importances
-       - If variance importance DECREASES over eras →
-         software reduced the impact of strategy errors (thesis claim)
+Usage: triggered by analyser.py (default) or analyser.py --model xgb
+       Use analyser.py --model rf for Random Forest baseline.
 """
 
-from sklearn.ensemble import RandomForestRegressor
+try:
+    from xgboost import XGBRegressor
+except ImportError:
+    raise ImportError("XGBoost not installed — run: pip install xgboost")
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
@@ -74,8 +64,7 @@ ERA_LABELS_ORDERED = [
 def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_conditions=None):
     """
     One row per driver per race.
-    Merges variance metrics with race results.
-    wet_race uses FastF1 for 2018+ and historical lookup (Phillips 2014) for pre-2018.
+    Merges variance metrics from pitstops.csv with race results from Ergast.
     """
     from analyser import (
         compute_pit_window_errors,
@@ -139,10 +128,9 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
             driver_last = driver.split()[-1].lower()
             round_num   = int(result["round"].iloc[0]) if "round" in result.columns else 0
             grid_key    = f"{year}_{round_num}_{driver_last}"
-            grid_pos    = grid_positions.get(grid_key, 20)  # default 20 if not found
+            grid_pos    = grid_positions.get(grid_key, 20)
 
-            # Look up race conditions: FastF1 for 2018+, historical table for pre-2018
-            # Historical source: Phillips (2014), f1metrics.wordpress.com
+            # Race conditions: FastF1 for 2018+, historical lookup for pre-2018
             circuit_key = race.lower().replace(" ", "_")
             year_conds  = race_conditions.get(year, {})
             cond = year_conds.get(circuit_key)
@@ -151,15 +139,12 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
                     if key in circuit_key or circuit_key in key:
                         cond = val
                         break
-
             if cond is not None:
-                # FastF1 data (2018+)
                 wet_race = int(cond["wet_race"])
                 sc_laps  = int(cond["sc_laps"])
             else:
-                # Pre-2018: use historical wet race lookup table
                 wet_race = 1 if (year, round_num) in WET_RACE_ROUNDS else 0
-                sc_laps  = 0  # historical SC lap counts not available
+                sc_laps  = 0
 
             window_pen    = float(we_row["window_penalty_s"])
             missed_uc     = float(we_row["missed_undercut_s"])
@@ -210,11 +195,16 @@ def train_and_evaluate(dataset):
     print(f"\n  Training on {len(train)} rows (1994-2011)")
     print(f"  Testing  on {len(test)} rows (2012-2024)")
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=6,
-        min_samples_leaf=5,
+    model = XGBRegressor(
+        n_estimators=400,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         random_state=42,
+        verbosity=0,
     )
     model.fit(X_train, y_train)
 
@@ -269,11 +259,14 @@ def analyse_era_importance(dataset):
         X = era_data[FEATURE_COLS].fillna(0)
         y = era_data["points_scored"]
 
-        model = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=5,
-            min_samples_leaf=5,
+        model = XGBRegressor(
+            n_estimators=200,
+            max_depth=4,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
             random_state=42,
+            verbosity=0,
         )
         model.fit(X, y)
 
@@ -399,6 +392,7 @@ def plot_results(importances, era_results, outputs_dir=None):
 def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_conditions=None, start=1994, end=2010, no_plot=False, outputs_dir=None):
     years = list(range(start, end + 1))
 
+    # Default outputs dir to a folder next to rf.py
     if outputs_dir is None:
         outputs_dir = os.path.join(_HERE, "outputs")
     os.makedirs(outputs_dir, exist_ok=True)

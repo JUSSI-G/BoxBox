@@ -119,7 +119,105 @@ def get_era_label(year):
     return applicable[max(applicable.keys())]
 
 
-# ── Ergast grid positions (cached) ────────────────────────────────────────────
+# ── Historical wet race lookup (1994–2017) ─────────────────────────────────────
+# Source: Phillips, A. (2014). "Who was the best wet-weather driver?"
+#         f1metrics. https://f1metrics.wordpress.com/2014/06/04/
+#         who-was-the-best-wet-weather-driver/
+#         2014–2017 rounds confirmed via author comments on same article.
+# Definition: wet if wet surface at any point during race (incl. start).
+# Coverage: 1994–2017. FastF1 (2018+) handled by fetch_race_conditions().
+
+WET_RACE_ROUNDS = {
+    (1994, 15),   # Japan
+    (1995,  3), (1995,  7), (1995, 11), (1995, 14), (1995, 16),
+    (1996,  2), (1996,  6), (1996,  7),
+    (1997,  5), (1997,  8), (1997, 12),
+    (1998,  3), (1998,  9), (1998, 13),
+    (1999,  7), (1999, 14),
+    (2000,  6), (2000,  8), (2000, 11), (2000, 13), (2000, 15), (2000, 16),
+    (2001,  2), (2001,  3),
+    (2002, 10),
+    (2003,  1), (2003,  3),
+    (2004,  2), (2004, 15), (2004, 18),
+    (2005, 16),
+    (2006, 13), (2006, 16),
+    (2007, 10), (2007, 15), (2007, 16),
+    (2008,  6), (2008,  8), (2008,  9), (2008, 13), (2008, 14), (2008, 18),
+    (2009,  2), (2009,  3),
+    (2010,  2), (2010,  4), (2010,  7), (2010, 13), (2010, 17),
+    (2011,  7), (2011,  9), (2011, 10), (2011, 11), (2011, 16),
+    (2012,  2), (2012, 20),
+    (2013,  2),
+    (2014, 11), (2014, 15),
+    (2015,  9), (2015, 16),
+    (2016,  6), (2016, 10), (2016, 20),
+    (2017,  2), (2017, 14),
+    # 2018–2024: covered by FastF1 in fetch_race_conditions()
+}
+
+# ── FastF1 race conditions (weather + safety car) ─────────────────────────────
+FASTF1_MIN_YEAR = 2018
+
+def fetch_race_conditions(year):
+    """Fetch wet/dry and SC laps per race via FastF1. Cached to f1_cache/."""
+    cache_path = os.path.join(CACHE_DIR, f"conditions_{year}.json")
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            return json.load(f)
+    if year < FASTF1_MIN_YEAR:
+        with open(cache_path, "w") as f:
+            json.dump({}, f)
+        return {}
+    try:
+        import fastf1
+        fastf1.Cache.enable_cache(CACHE_DIR)
+    except ImportError:
+        print("  ⚠  fastf1 not installed — pip install fastf1")
+        return {}
+    conditions = {}
+    try:
+        schedule = fastf1.get_event_schedule(year, include_testing=False)
+    except Exception as exc:
+        print(f"  ⚠  FastF1 schedule unavailable for {year} ({exc})")
+        return {}
+    race_events = schedule[schedule["EventFormat"] != "testing"]
+    total = len(race_events)
+    for i, (_, event) in enumerate(race_events.iterrows(), 1):
+        circuit_key = str(event.get("Location", event.get("EventName", f"race_{i}"))).lower().replace(" ", "_")
+        print(f"  → FastF1 {year} [{i}/{total}] {circuit_key}", flush=True)
+        try:
+            session = fastf1.get_session(year, event["RoundNumber"], "R")
+            session.load(weather=True, laps=True, telemetry=False, messages=False)
+            wet = 0
+            if session.weather_data is not None and not session.weather_data.empty:
+                rain_col = "Rainfall" if "Rainfall" in session.weather_data.columns else None
+                if rain_col:
+                    wet = int(session.weather_data[rain_col].sum() > 0)
+            sc_laps = 0
+            if session.laps is not None and not session.laps.empty:
+                if "TrackStatus" in session.laps.columns:
+                    sc_laps = int(session.laps["TrackStatus"].astype(str).str.contains("4|6", na=False).sum())
+            conditions[circuit_key] = {"wet_race": wet, "sc_laps": sc_laps}
+        except Exception as exc:
+            print(f"    ⚠  Could not load session ({exc}) — using defaults")
+            conditions[circuit_key] = {"wet_race": 0, "sc_laps": 0}
+    with open(cache_path, "w") as f:
+        json.dump(conditions, f)
+    print(f"  Conditions cached for {year}: {len(conditions)} races")
+    return conditions
+
+
+def load_all_race_conditions(start, end):
+    """Load race conditions for all years. Returns {year: {circuit: {wet,sc}}}"""
+    all_conditions = {}
+    for year in range(start, end + 1):
+        if year >= FASTF1_MIN_YEAR:
+            print(f"  Fetching race conditions {year} from FastF1...")
+        all_conditions[year] = fetch_race_conditions(year)
+    fetched = sum(1 for y in range(start, end + 1) if y >= FASTF1_MIN_YEAR)
+    print(f"  Race conditions loaded: {fetched} seasons via FastF1 "
+          f"({start}–{FASTF1_MIN_YEAR - 1} use historical lookup table)")
+    return all_conditions
 
 def fetch_grid_positions(year):
     """
@@ -382,6 +480,9 @@ def main():
     parser.add_argument("--start",   type=int, default=1994)
     parser.add_argument("--end",     type=int, default=2024)
     parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--model",   type=str, default="xgb",
+                        choices=["rf", "xgb"],
+                        help="Model to use: rf (Random Forest) or xgb (XGBoost, default)")
     args = parser.parse_args()
 
     print("\n  F1 Strategy Variance Analyser  v5.0")
@@ -408,7 +509,12 @@ def main():
     }
 
     try:
-        from rf import run as run_rf
+        if args.model == "xgb":
+            from xgb import run as run_rf
+            print("\n  Model: XGBoost (xgb.py)")
+        else:
+            from rf import run as run_rf
+            print("\n  Model: Random Forest (rf.py)")
     except ImportError:
         print("  ✗ rf.py not found — make sure it is in the same folder as analyser.py")
         return
@@ -416,11 +522,14 @@ def main():
     print(f"\n  Fetching grid positions {args.start}–{args.end} from Ergast...")
     grid_positions = load_all_grid_positions(args.start, args.end)
     print(f"  ✓ Grid positions loaded: {len(grid_positions)} entries")
+    print(f"  Race conditions loading (FastF1 {FASTF1_MIN_YEAR}–{args.end} + historical table)...")
+    race_conditions = load_all_race_conditions(args.start, args.end)
 
     run_rf(
         pitstops_df=pitstops_df,
         ergast_results_by_year=ergast_by_year,
         grid_positions=grid_positions,
+        race_conditions=race_conditions,
         start=args.start,
         end=args.end,
         no_plot=args.no_plot,

@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>F1 Strategy Variance — Thesis Pipeline</title>
+<title>BoxBox</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{--red:#e8003d;--amber:#ffb800;--green:#00c96e;--blue:#3d9eff;--bg:#080808;--card:#111;--border:#1e1e1e;--muted:#444;--text:#e8e8e8;--mono:'Share Tech Mono',monospace;--sans:'Barlow',sans-serif;--cond:'Barlow Condensed',sans-serif}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -81,11 +82,6 @@ main{overflow-y:auto}
 .flip-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 8px;border:1px solid var(--amber);color:var(--amber);display:inline-block}
 .pred-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 8px;border:1px solid var(--blue);color:var(--blue);display:inline-block}
 .era-pill{font-family:var(--mono);font-size:9px;padding:2px 8px;border:1px solid var(--border);color:var(--muted);display:inline-block}
-.img-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
-.img-card{background:var(--card);border:1px solid var(--border);overflow:hidden;border-radius:2px}
-.img-card img{width:100%;display:block}
-.img-label{font-family:var(--mono);font-size:10px;color:var(--muted);padding:8px 12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
-.img-label a{color:var(--green);text-decoration:none;font-size:10px}
 .placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4rem 2rem;text-align:center;gap:1rem;color:var(--muted)}
 .placeholder .ph-icon{font-size:2rem;opacity:.3}
 .placeholder p{font-family:var(--mono);font-size:12px;max-width:360px;line-height:1.8}
@@ -102,7 +98,57 @@ h2{font-family:var(--cond);font-size:1.6rem;font-weight:700;margin-bottom:1rem}
 h2 em{font-style:normal;color:var(--amber)}
 .section-label{font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:1.25rem;display:flex;align-items:center;gap:1rem}
 .section-label::after{content:'';flex:1;height:1px;background:var(--border)}
-@media(max-width:860px){.page{grid-template-columns:1fr}.sidebar{position:static;height:auto;border-right:none;border-bottom:1px solid var(--border)}.results-grid{grid-template-columns:1fr 1fr}.img-grid{grid-template-columns:1fr}.pipe-row{flex-direction:column}}
+
+/* ── Charts tab ── */
+.charts-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem}
+.charts-header h2{margin-bottom:0}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem}
+.chart-grid.full{grid-template-columns:1fr}
+.chart-card{background:var(--card);border:1px solid var(--border);padding:1.5rem;position:relative}
+.chart-card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem}
+.chart-title{font-family:var(--cond);font-size:14px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text)}
+.chart-subtitle{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px}
+.chart-badge{font-family:var(--mono);font-size:9px;padding:2px 8px;border:1px solid var(--border);color:var(--muted)}
+.chart-wrap{position:relative;height:220px}
+.chart-wrap.tall{height:300px}
+.chart-wrap.short{height:160px}
+
+/* Timeline chart */
+.timeline-wrap{overflow-x:auto;padding-bottom:8px}
+.timeline{display:flex;gap:0;align-items:stretch;min-width:max-content;border:1px solid var(--border)}
+.timeline-year{display:flex;flex-direction:column;align-items:center;min-width:52px;border-right:1px solid var(--border);position:relative}
+.timeline-year:last-child{border-right:none}
+.timeline-year-label{font-family:var(--mono);font-size:9px;color:var(--muted);padding:6px 4px;border-bottom:1px solid var(--border);width:100%;text-align:center}
+.timeline-bar-wrap{flex:1;display:flex;align-items:flex-end;justify-content:center;padding:8px 6px;min-height:120px}
+.timeline-bar{width:28px;border-radius:1px 1px 0 0;position:relative;cursor:pointer;transition:opacity .2s}
+.timeline-bar:hover{opacity:.8}
+.timeline-bar::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border);font-family:var(--mono);font-size:9px;color:var(--text);padding:4px 8px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s;z-index:20}
+.timeline-bar:hover::after{opacity:1}
+.timeline-flip{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:10px}
+.timeline-era{font-family:var(--mono);font-size:8px;color:var(--muted);padding:4px 2px;border-top:1px solid var(--border);width:100%;text-align:center;writing-mode:vertical-rl;transform:rotate(180deg);height:52px;overflow:hidden}
+
+/* Era comparison table */
+.era-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.era-table th{font-family:var(--mono);font-size:8px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)}
+.era-table td{padding:8px 10px;border-bottom:1px solid #0f0f0f;font-family:var(--mono);font-size:11px}
+.era-table tr:hover td{background:#0d0d0d}
+.ratio-bar{display:inline-block;height:6px;border-radius:1px;vertical-align:middle;margin-left:6px}
+
+/* Stat chips */
+.chart-stats{display:flex;gap:1px;background:var(--border);margin-bottom:1.5rem}
+.chart-stat{flex:1;background:var(--card);padding:.875rem 1rem}
+.chart-stat-label{font-family:var(--mono);font-size:8px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.chart-stat-value{font-family:var(--mono);font-size:1.4rem;line-height:1}
+
+/* PNG exports section */
+.png-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:2rem}
+.png-card{background:var(--card);border:1px solid var(--border);overflow:hidden}
+.png-card img{width:100%;display:block}
+.png-label{font-family:var(--mono);font-size:10px;color:var(--muted);padding:8px 12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.png-label a{color:var(--green);text-decoration:none;font-size:10px}
+.no-data-overlay{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:var(--muted);font-family:var(--mono);font-size:11px}
+
+@media(max-width:860px){.page{grid-template-columns:1fr}.sidebar{position:static;height:auto;border-right:none;border-bottom:1px solid var(--border)}.results-grid{grid-template-columns:1fr 1fr}.chart-grid{grid-template-columns:1fr}.pipe-row{flex-direction:column}.png-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -159,6 +205,7 @@ h2 em{font-style:normal;color:var(--amber)}
       <button class="tab"        id="tab-pipeline" onclick="showTab('pipeline')">Pipeline</button>
     </div>
 
+    <!-- TERMINAL TAB -->
     <div class="tab-content active" id="content-run">
       <div class="terminal">
         <div class="terminal-header">
@@ -167,23 +214,26 @@ h2 em{font-style:normal;color:var(--amber)}
         </div>
         <div id="log"><span class="log-normal">Ready. Press "Run pipeline" to start.
 
-Full pipeline:   analyser.py &rarr; rf.py &rarr; f1.py
+Full pipeline:   analyser.py &rarr; xgb.py &rarr; f1.py
 Single season:   f1.py --year YYYY (needs existing dataset)</span></div>
       </div>
     </div>
 
+    <!-- RESULTS TAB -->
     <div class="tab-content" id="content-results">
       <div id="resultsContent">
         <div class="placeholder"><div class="ph-icon">&#9711;</div><p>No results yet. Run the pipeline first, then click Refresh results.</p></div>
       </div>
     </div>
 
+    <!-- CHARTS TAB -->
     <div class="tab-content" id="content-charts">
       <div id="chartsContent">
-        <div class="placeholder"><div class="ph-icon">&#9711;</div><p>Charts appear here after the pipeline completes.</p></div>
+        <div class="placeholder"><div class="ph-icon">&#9632;</div><p>Run the pipeline first, then click Refresh results to populate charts.</p></div>
       </div>
     </div>
 
+    <!-- PIPELINE TAB -->
     <div class="tab-content" id="content-pipeline">
       <div class="section-label">Architecture</div>
       <h2>Three-file <em>pipeline</em></h2>
@@ -203,13 +253,13 @@ Single season:   f1.py --year YYYY (needs existing dataset)</span></div>
         </div>
         <div class="pipe-block">
           <div class="pipe-num">02</div>
-          <div class="pipe-file">rf.py</div>
-          <div class="pipe-title">Random Forest</div>
-          <div class="pipe-desc">Trains RandomForestRegressor on 1994&ndash;2011, tests on 2012&ndash;2024. Feature importances per era. Decreasing variance/grid ratio = thesis claim. Saves dataset and passes trained model directly to f1.py.</div>
+          <div class="pipe-file">xgb.py</div>
+          <div class="pipe-title">XGBoost Model</div>
+          <div class="pipe-desc">Trains XGBoostRegressor on 1994&ndash;2011, tests on 2012&ndash;2024. Feature importances per era. Decreasing variance/grid ratio = thesis claim. Saves dataset and passes trained model directly to f1.py.</div>
           <div class="pipe-outs">
             <div class="pipe-out">&rarr; f1_rf_dataset.csv</div>
             <div class="pipe-out">&rarr; feature importances</div>
-            <div class="pipe-out">&rarr; trained RF model</div>
+            <div class="pipe-out">&rarr; trained XGB model</div>
             <div class="pipe-out">&rarr; f1_rf_results.png</div>
           </div>
         </div>
@@ -217,7 +267,7 @@ Single season:   f1.py --year YYYY (needs existing dataset)</span></div>
           <div class="pipe-num">03</div>
           <div class="pipe-file">f1.py</div>
           <div class="pipe-title">Championship Simulator</div>
-          <div class="pipe-desc">Receives trained RF. Zeros variance features per driver-race, keeps grid + era fixed. Predicts points under both scenarios. Rebuilds standings. Flags seasons where the title would have changed.</div>
+          <div class="pipe-desc">Receives trained model. Zeros variance features per driver-race, keeps grid + era fixed. Predicts points under both scenarios. Rebuilds standings. Flags seasons where the title would have changed.</div>
           <div class="pipe-outs">
             <div class="pipe-out">&rarr; f1_simulation_sweep.csv</div>
             <div class="pipe-out">&rarr; title-flip seasons</div>
@@ -245,7 +295,7 @@ X_perfect = X_actual.copy()
 <span style="color:var(--red)">for</span> col <span style="color:var(--red)">in</span> VARIANCE_FEATURES:
     X_perfect[col] = <span style="color:#a78bfa">0.0</span>
 
-<span style="color:#333"># RF predicts both -- no correction coefficients</span>
+<span style="color:#333"># Model predicts both -- no correction coefficients</span>
 dataset[<span style="color:var(--green)">"rf_predicted_points"</span>] = model.predict(X_actual)
 dataset[<span style="color:var(--green)">"rf_perfect_points"</span>]   = model.predict(X_perfect)</pre>
       </div>
@@ -254,7 +304,7 @@ dataset[<span style="color:var(--green)">"rf_perfect_points"</span>]   = model.p
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border)">
         <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">Heilmeier et al. 2018</div><div style="font-size:13px;color:#555">A Race Simulation for Strategy Decisions in Circuit Motorsports. IEEE ITSC. DOI: 10.1109/ITSC.2018.8570012. Basis for tyre degradation model and optimal pit window calculation.</div></div>
         <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">Heilmeier et al. 2020</div><div style="font-size:13px;color:#555">Virtual Strategy Engineer. Applied Sciences. DOI: 10.3390/app10217805. Justifies quadratic optimisation for optimal pit strategy without opponents.</div></div>
-        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">scikit-learn docs</div><div style="font-size:13px;color:#555">Permutation Importance with Multicollinear Features. Justifies removal of total_variance_s from FEATURE_COLS to avoid collinearity.</div></div>
+        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">scikit-learn / XGBoost</div><div style="font-size:13px;color:#555">Permutation Importance with Multicollinear Features. Justifies removal of total_variance_s from FEATURE_COLS to avoid collinearity. XGBoost used as primary model for better cross-era generalisation (Test R²: 0.371 vs RF 0.237).</div></div>
         <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">era_code</div><div style="font-size:13px;color:#555">Author classification. Original thesis contribution. Maps seasons to software eras based on known F1 technology adoption milestones (1994, 2000, 2006, 2012, 2018).</div></div>
       </div>
     </div>
@@ -262,13 +312,43 @@ dataset[<span style="color:var(--green)">"rf_perfect_points"</span>]   = model.p
 </div>
 
 <script>
-let evtSource=null,running=false;
-function showTab(n){document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('content-'+n).classList.add('active');document.getElementById('tab-'+n).classList.add('active')}
+// ── State ──────────────────────────────────────────────────────────────────────
+let evtSource=null, running=false;
+let _charts = {}; // Chart.js instances keyed by canvas id
+
+// ── Era definitions (matches Python) ─────────────────────────────────────────
+const ERA_COLORS = {
+  'Real-time data':    '#3d9eff',
+  'Simulation tools':  '#a78bfa',
+  'Full analytics':    '#ffb800',
+  'Predictive models': '#00c96e',
+  'AI / Monte Carlo':  '#e8003d',
+};
+const ERA_ORDER = ['Real-time data','Simulation tools','Full analytics','Predictive models','AI / Monte Carlo'];
+
+function eraColor(label) {
+  for (const [k,v] of Object.entries(ERA_COLORS)) {
+    if (label && label.includes(k.split(' ')[0])) return v;
+  }
+  return '#666';
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+function showTab(n){
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('content-'+n).classList.add('active');
+  document.getElementById('tab-'+n).classList.add('active');
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────────
 function setStatus(s,t){document.getElementById('statusDot').className='status-dot '+s;document.getElementById('statusText').textContent=t}
 function appendLog(line,cls){const log=document.getElementById('log');const el=document.createElement('div');el.className=cls||classify(line);el.textContent=line;log.appendChild(el);log.scrollTop=log.scrollHeight}
-function classify(l){if(l.startsWith('__START__'))return 'log-start';if(l.startsWith('__DONE__'))return 'log-done';if(l.startsWith('__ERROR__'))return 'log-error';if(l.includes('✓'))return 'log-check';if(l.includes('⚠'))return 'log-warn';if(l.includes('✗'))return 'log-error';if(l.startsWith('──'))return 'log-sep';return 'log-normal'}
+function classify(l){if(l.startsWith('__START__'))return 'log-start';if(l.startsWith('__DONE__'))return 'log-done';if(l.startsWith('__ERROR__'))return 'log-error';if(l.includes('✓'))return 'log-check';if(l.includes('⚠'))return 'log-warn';if(l.includes('✗'))return 'log-error';if(l.startsWith('──'))return 'log-sep';if(l.includes('Model:'))return 'log-check';return 'log-normal'}
 function clearLog(){document.getElementById('log').innerHTML=''}
 function setBtns(d){document.getElementById('runBtn').disabled=d;document.getElementById('seasonBtn').disabled=d}
+
+// ── Pipeline controls ──────────────────────────────────────────────────────────
 function startStream(){
   if(evtSource){evtSource.close();evtSource=null}
   evtSource=new EventSource('/api/stream');
@@ -304,8 +384,14 @@ function loadStatus(){
   }).catch(()=>{})
 }
 function loadResults(){
-  fetch('/api/results').then(r=>r.json()).then(d=>{renderResults(d);renderCharts(d);loadStatus()}).catch(()=>{})
+  fetch('/api/results').then(r=>r.json()).then(d=>{
+    renderResults(d);
+    renderCharts(d);
+    loadStatus();
+  }).catch(()=>{})
 }
+
+// ── Results tab ────────────────────────────────────────────────────────────────
 function renderResults(d){
   const el=document.getElementById('resultsContent');
   if(!d.sweep||d.sweep.length===0){el.innerHTML='<div class="placeholder"><div class="ph-icon">&#9711;</div><p>No results yet. Run the pipeline first.</p></div>';return}
@@ -320,11 +406,11 @@ function renderResults(d){
       <div class="result-card"><div class="result-label">Driver-race rows</div><div class="result-value amber">${d.dataset_rows.toLocaleString()}</div></div>
       <div class="result-card"><div class="result-label">Hardcoded corrections</div><div class="result-value green">0</div></div>
       <div class="result-card"><div class="result-label">Avg variance / race</div><div class="result-value">${avgV}<span style="font-size:14px;color:var(--muted)">s</span></div></div>
-      <div class="result-card"><div class="result-label">Prediction changes (RF &ne; real)</div><div class="result-value ${predFlips>0?'blue':'green'}">${predFlips}</div></div>
+      <div class="result-card"><div class="result-label">Prediction changes (Model &ne; real)</div><div class="result-value ${predFlips>0?'blue':'green'}">${predFlips}</div></div>
       <div class="result-card"><div class="result-label">Champion changes (perfect &ne; real)</div><div class="result-value ${perfFlips>0?'red':'green'}">${perfFlips}</div></div>
     </div>
     <table class="champ-table">
-      <thead><tr><th>Year</th><th>Era</th><th>Real champion</th><th>RF champion</th><th>Perfect-strategy champion</th><th>Avg variance</th><th>RF pts gain</th><th>Prediction</th><th>Champion</th></tr></thead>
+      <thead><tr><th>Year</th><th>Era</th><th>Real champion</th><th>Model champion</th><th>Perfect-strategy champion</th><th>Avg variance</th><th>Model pts gain</th><th>Prediction</th><th>Champion</th></tr></thead>
       <tbody>${d.sweep.map(r=>`<tr class="${r.perf_flips?'flip-row':''}">
         <td style="font-family:var(--mono);font-weight:600">${r.year}</td>
         <td><span class="era-pill">${r.era_label}</span></td>
@@ -338,14 +424,352 @@ function renderResults(d){
       </tr>`).join('')}</tbody>
     </table>`
 }
-function renderCharts(d){
-  const el=document.getElementById('chartsContent');
-  const imgs=Object.entries(d.images||{}).filter(([,v])=>v);
-  if(imgs.length===0){el.innerHTML='<div class="placeholder"><div class="ph-icon">&#9711;</div><p>Charts appear here after the pipeline runs.</p></div>';return}
-  el.innerHTML=`<div class="img-grid">${imgs.map(([n])=>`<div class="img-card"><img src="/outputs/${n}?t=${Date.now()}" alt="${n}" loading="lazy"><div class="img-label"><span>${n}</span><a href="/outputs/${n}" target="_blank" download>&#8595; download</a></div></div>`).join('')}</div>`
+
+// ── Charts tab — main render ───────────────────────────────────────────────────
+function renderCharts(d) {
+  const el = document.getElementById('chartsContent');
+  if (!d.sweep || d.sweep.length === 0) {
+    el.innerHTML = '<div class="placeholder"><div class="ph-icon">&#9632;</div><p>Run the pipeline first, then click Refresh results to populate charts.</p></div>';
+    return;
+  }
+
+  // Destroy old Chart.js instances before re-rendering
+  Object.values(_charts).forEach(c => { try { c.destroy(); } catch(e){} });
+  _charts = {};
+
+  const sweep = d.sweep;
+  const years = sweep.map(r => r.year);
+
+  // Derived stats
+  const predFlips = sweep.filter(r => r.pred_flips).length;
+  const perfFlips = sweep.filter(r => r.perf_flips).length;
+  const avgVar    = (sweep.reduce((s,r) => s + (r.avg_variance_s||0), 0) / sweep.length).toFixed(2);
+  const maxVar    = Math.max(...sweep.map(r => r.avg_variance_s||0)).toFixed(2);
+  const minVar    = Math.min(...sweep.map(r => r.avg_variance_s||0)).toFixed(2);
+
+  // Era grouping
+  const eraMap = {};
+  sweep.forEach(r => {
+    const e = r.era_label || 'Unknown';
+    if (!eraMap[e]) eraMap[e] = { variance: [], gain: [], count: 0, flips: 0 };
+    eraMap[e].variance.push(r.avg_variance_s || 0);
+    eraMap[e].gain.push(r.avg_points_gain || 0);
+    eraMap[e].count++;
+    if (r.perf_flips) eraMap[e].flips++;
+  });
+
+  el.innerHTML = `
+    <!-- Top stat chips -->
+    <div class="chart-stats">
+      <div class="chart-stat"><div class="chart-stat-label">Seasons</div><div class="chart-stat-value" style="color:var(--blue)">${sweep.length}</div></div>
+      <div class="chart-stat"><div class="chart-stat-label">Avg variance</div><div class="chart-stat-value">${avgVar}<span style="font-size:12px;color:var(--muted)">s</span></div></div>
+      <div class="chart-stat"><div class="chart-stat-label">Peak variance</div><div class="chart-stat-value" style="color:var(--amber)">${maxVar}<span style="font-size:12px;color:var(--muted)">s</span></div></div>
+      <div class="chart-stat"><div class="chart-stat-label">Prediction changes</div><div class="chart-stat-value" style="color:var(--blue)">${predFlips}</div></div>
+      <div class="chart-stat"><div class="chart-stat-label">Champion changes</div><div class="chart-stat-value" style="color:${perfFlips>0?'var(--amber)':'var(--green)'}">${perfFlips}</div></div>
+    </div>
+
+    <!-- Row 1: variance over time + points gain -->
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">Strategy Variance Over Time</div>
+            <div class="chart-subtitle">Avg window + exec + undercut penalty per driver-race</div>
+          </div>
+          <div class="chart-badge">seconds</div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-variance"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">RF Points Gain — Perfect Strategy</div>
+            <div class="chart-subtitle">Avg points gained if variance features = 0</div>
+          </div>
+          <div class="chart-badge">pts/driver</div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-gain"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Row 2: era comparison + title flip timeline -->
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">Variance by Era</div>
+            <div class="chart-subtitle">Avg strategy variance — thesis key evidence</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-era"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">Championship Outcome Changes</div>
+            <div class="chart-subtitle">&#9733; = perfect strategy changes the champion</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-flips"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Row 3: era breakdown table -->
+    <div class="chart-grid full">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">Era Summary — Strategy Impact Breakdown</div>
+            <div class="chart-subtitle">Avg variance, points gain, and title changes per software era</div>
+          </div>
+        </div>
+        <table class="era-table">
+          <thead>
+            <tr>
+              <th>Era</th>
+              <th>Seasons</th>
+              <th>Avg variance (s)</th>
+              <th>Variance trend</th>
+              <th>Avg pts gain</th>
+              <th>Title changes</th>
+            </tr>
+          </thead>
+          <tbody id="era-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PNG exports -->
+    <div class="section-label" style="margin-top:2rem">Matplotlib exports</div>
+    <div class="png-grid" id="pngGrid">
+      ${buildPngCards(d.images)}
+    </div>
+  `;
+
+  // ── Chart.js defaults ────────────────────────────────────────────────────────
+  const BASE_OPTIONS = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#1a1a1a',
+        borderColor: '#2a2a2a',
+        borderWidth: 1,
+        titleColor: '#e8e8e8',
+        bodyColor: '#888',
+        titleFont: { family: 'Share Tech Mono', size: 11 },
+        bodyFont:  { family: 'Share Tech Mono', size: 10 },
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: '#555', font: { family: 'Share Tech Mono', size: 9 }, maxRotation: 45 },
+        grid:  { color: '#1a1a1a' }
+      },
+      y: {
+        ticks: { color: '#555', font: { family: 'Share Tech Mono', size: 9 } },
+        grid:  { color: '#1a1a1a' }
+      }
+    }
+  };
+
+  // ── Chart 1: Variance over time (bar, era-coloured) ─────────────────────────
+  {
+    const ctx = document.getElementById('chart-variance').getContext('2d');
+    const barColors = sweep.map(r => eraColor(r.era_label) + 'cc');
+    _charts['variance'] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: years,
+        datasets: [{
+          data: sweep.map(r => r.avg_variance_s || 0),
+          backgroundColor: barColors,
+          borderColor: sweep.map(r => eraColor(r.era_label)),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        ...BASE_OPTIONS,
+        plugins: {
+          ...BASE_OPTIONS.plugins,
+          tooltip: {
+            ...BASE_OPTIONS.plugins.tooltip,
+            callbacks: {
+              label: ctx => `${ctx.parsed.y.toFixed(2)}s — ${sweep[ctx.dataIndex].era_label}`
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Chart 2: Points gain trend (line) ────────────────────────────────────────
+  {
+    const ctx = document.getElementById('chart-gain').getContext('2d');
+    _charts['gain'] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: years,
+        datasets: [{
+          data: sweep.map(r => r.avg_points_gain || 0),
+          borderColor: '#00c96e',
+          backgroundColor: 'rgba(0,201,110,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 4,
+          pointBackgroundColor: sweep.map(r => r.perf_flips ? '#ffb800' : '#00c96e'),
+          pointBorderColor:     sweep.map(r => r.perf_flips ? '#ffb800' : '#00c96e'),
+          pointRadius:          sweep.map(r => r.perf_flips ? 7 : 3),
+        }]
+      },
+      options: {
+        ...BASE_OPTIONS,
+        plugins: {
+          ...BASE_OPTIONS.plugins,
+          tooltip: {
+            ...BASE_OPTIONS.plugins.tooltip,
+            callbacks: {
+              label: ctx => {
+                const r = sweep[ctx.dataIndex];
+                return `${ctx.parsed.y.toFixed(2)} pts${r.perf_flips ? ' ★ CHAMPION CHANGES' : ''}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Chart 3: Era variance bars ───────────────────────────────────────────────
+  {
+    const ctx = document.getElementById('chart-era').getContext('2d');
+    const eraNames = Object.keys(eraMap);
+    const eraAvgVar = eraNames.map(e => {
+      const vs = eraMap[e].variance;
+      return vs.reduce((a,b)=>a+b,0)/vs.length;
+    });
+    _charts['era'] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: eraNames.map(e => e.length > 16 ? e.slice(0,16)+'…' : e),
+        datasets: [{
+          data: eraAvgVar,
+          backgroundColor: eraNames.map(e => eraColor(e) + 'bb'),
+          borderColor:     eraNames.map(e => eraColor(e)),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        ...BASE_OPTIONS,
+        plugins: {
+          ...BASE_OPTIONS.plugins,
+          tooltip: {
+            ...BASE_OPTIONS.plugins.tooltip,
+            callbacks: {
+              title: (items) => eraNames[items[0].dataIndex],
+              label:  ctx => `${ctx.parsed.y.toFixed(3)}s avg variance`
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Chart 4: Title flips scatter ─────────────────────────────────────────────
+  {
+    const ctx = document.getElementById('chart-flips').getContext('2d');
+    _charts['flips'] = new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [
+          {
+            label: 'Same champion',
+            data: sweep.filter(r => !r.perf_flips).map(r => ({x: r.year, y: r.avg_variance_s||0})),
+            backgroundColor: '#3d9eff55',
+            borderColor:     '#3d9eff',
+            pointRadius: 5,
+            pointStyle: 'circle',
+          },
+          {
+            label: 'Champion changes',
+            data: sweep.filter(r => r.perf_flips).map(r => ({x: r.year, y: r.avg_variance_s||0, label: r.perf_winner})),
+            backgroundColor: '#ffb80099',
+            borderColor:     '#ffb800',
+            pointRadius: 9,
+            pointStyle: 'star',
+          }
+        ]
+      },
+      options: {
+        ...BASE_OPTIONS,
+        plugins: {
+          ...BASE_OPTIONS.plugins,
+          legend: {
+            display: true,
+            labels: {
+              color: '#666',
+              font:  { family: 'Share Tech Mono', size: 9 },
+              boxWidth: 12,
+            }
+          },
+          tooltip: {
+            ...BASE_OPTIONS.plugins.tooltip,
+            callbacks: {
+              label: ctx => {
+                const p = ctx.raw;
+                return `${p.x} — ${p.y.toFixed(2)}s${p.label ? ' → ' + p.label : ''}`;
+              }
+            }
+          }
+        },
+        scales: {
+          ...BASE_OPTIONS.scales,
+          x: { ...BASE_OPTIONS.scales.x, title: { display: true, text: 'Season', color: '#555', font: { family: 'Share Tech Mono', size: 9 } } },
+          y: { ...BASE_OPTIONS.scales.y, title: { display: true, text: 'Avg variance (s)', color: '#555', font: { family: 'Share Tech Mono', size: 9 } } }
+        }
+      }
+    });
+  }
+
+  // ── Era summary table ────────────────────────────────────────────────────────
+  const tbody = document.getElementById('era-tbody');
+  const maxAvgVar = Math.max(...Object.values(eraMap).map(e => {
+    const v = e.variance; return v.reduce((a,b)=>a+b,0)/v.length;
+  }));
+  tbody.innerHTML = Object.entries(eraMap).map(([era, data]) => {
+    const avgV = (data.variance.reduce((a,b)=>a+b,0)/data.variance.length).toFixed(2);
+    const avgG = (data.gain.reduce((a,b)=>a+b,0)/data.gain.length).toFixed(2);
+    const barW = Math.round((parseFloat(avgV) / maxAvgVar) * 120);
+    const col  = eraColor(era);
+    return `<tr>
+      <td><span style="color:${col};font-weight:600">${era}</span></td>
+      <td style="color:var(--muted)">${data.count}</td>
+      <td>${avgV}s</td>
+      <td><span class="ratio-bar" style="width:${barW}px;background:${col};opacity:.7"></span></td>
+      <td style="color:var(--green)">${avgG}</td>
+      <td>${data.flips > 0
+        ? `<span style="color:var(--amber)">&#9733; ${data.flips}/${data.count}</span>`
+        : `<span style="color:var(--muted)">— 0/${data.count}</span>`
+      }</td>
+    </tr>`;
+  }).join('');
 }
+
+function buildPngCards(images) {
+  if (!images) return '<div style="font-family:var(--mono);font-size:11px;color:var(--muted)">No PNG exports yet.</div>';
+  const imgs = Object.entries(images).filter(([,v])=>v);
+  if (imgs.length === 0) return '<div style="font-family:var(--mono);font-size:11px;color:var(--muted)">No PNG exports yet. Run the pipeline to generate them.</div>';
+  return imgs.map(([n]) => `
+    <div class="png-card">
+      <img src="/outputs/${n}?t=${Date.now()}" alt="${n}" loading="lazy">
+      <div class="png-label"><span>${n}</span><a href="/outputs/${n}" target="_blank" download>&#8595; download</a></div>
+    </div>`).join('');
+}
+
 setInterval(()=>{if(!running)loadStatus()},10000);
-loadStatus();loadResults();
+loadStatus();
+loadResults();
 </script>
 </body>
 </html>

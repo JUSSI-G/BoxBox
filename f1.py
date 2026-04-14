@@ -80,6 +80,8 @@ FEATURE_COLS = [
     "window_penalty_s",
     "exec_penalty_s",
     "era_code",
+    "wet_race",
+    "sc_laps",
 ]
 
 # Variance features zeroed for the perfect-strategy counterfactual.

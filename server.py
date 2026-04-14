@@ -59,6 +59,8 @@ def _stream_subprocess(cmd):
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"]       = "1"
 
     try:
         proc = subprocess.Popen(
@@ -132,6 +134,7 @@ def run_pipeline():
         "--start", str(start),
         "--end",   str(end),
         "--no-plot",
+        "--model", "xgb",
     ]
 
     threading.Thread(target=_stream_subprocess, args=(cmd,), daemon=True).start()
