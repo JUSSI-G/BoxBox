@@ -21,7 +21,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-import os, sys
+import os, sys, json
 try:
     matplotlib.use("TkAgg")
 except Exception:
@@ -62,10 +62,6 @@ ERA_LABELS_ORDERED = [
 # ── Step 1: Build dataset ──────────────────────────────────────────────────────
 
 def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_conditions=None):
-    """
-    One row per driver per race.
-    Merges variance metrics from pitstops.csv with race results from Ergast.
-    """
     from analyser import (
         compute_pit_window_errors,
         compute_exec_penalties,
@@ -107,14 +103,12 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
             driver = we_row["driver"]
             race   = we_row["race"]
 
-            # Get exec penalty for this driver/race
             ep = exec_penalties[
                 (exec_penalties["driver"] == driver) &
                 (exec_penalties["race"]   == race)
             ]
             exec_pen = float(ep["exec_penalty_s"].iloc[0]) if not ep.empty else 0.0
 
-            # Match driver to Ergast result
             driver_last = driver.split()[-1].lower()
             result = year_results[
                 year_results["driver_name"].str.lower().str.contains(driver_last, na=False)
@@ -123,14 +117,11 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
                 continue
 
             points   = float(result["points"].iloc[0])
-            # Look up starting grid position from Ergast cache
-            # Key format: "{year}_{round}_{driver_lastname}"
             driver_last = driver.split()[-1].lower()
             round_num   = int(result["round"].iloc[0]) if "round" in result.columns else 0
             grid_key    = f"{year}_{round_num}_{driver_last}"
             grid_pos    = grid_positions.get(grid_key, 20)
 
-            # Race conditions: FastF1 for 2018+, historical lookup for pre-2018
             circuit_key = race.lower().replace(" ", "_")
             year_conds  = race_conditions.get(year, {})
             cond = year_conds.get(circuit_key)
@@ -176,10 +167,6 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
 # ── Step 2: Train and evaluate ─────────────────────────────────────────────────
 
 def train_and_evaluate(dataset):
-    """
-    Train on 1994-2011, test on 2012-2024.
-    Prints R² scores and feature importances.
-    """
     train = dataset[dataset["year"] <= 2011].copy()
     test  = dataset[dataset["year"] >  2011].copy()
 
@@ -235,11 +222,13 @@ def analyse_era_importance(dataset):
     Train separate models per era.
     Compares strategy variance importance vs grid position per era.
     A decreasing variance/grid ratio over time = software reduced strategy errors.
+
+    Returns results dict AND saves to f1_era_importance.json for the dashboard.
     """
     era_groups = {
-        "Pre-software (1994-1999)":   (1994, 1999),
-        "Early tools (2000-2005)":    (2000, 2005),
-        "Full analytics (2006-2011)": (2006, 2011),
+        "Pre-software (1994-1999)":      (1994, 1999),
+        "Early tools (2000-2005)":       (2000, 2005),
+        "Full analytics (2006-2011)":    (2006, 2011),
         "Predictive models (2012-2017)": (2012, 2017),
         "AI / Monte Carlo (2018-2024)":  (2018, 2024),
     }
@@ -277,11 +266,18 @@ def analyse_era_importance(dataset):
         grid_imp         = importances["grid_position"]
         ratio            = variance_imp / grid_imp if grid_imp > 0 else 0
 
+        # Store all per-feature importances too, for the dashboard
         results[era_name] = {
-            "variance_importance": round(variance_imp, 3),
-            "grid_importance":     round(grid_imp, 3),
-            "ratio":               round(ratio, 3),
-            "n_rows":              len(era_data),
+            "era_start":           era_start,
+            "era_end":             era_end,
+            "variance_importance": round(float(variance_imp), 4),
+            "grid_importance":     round(float(grid_imp), 4),
+            "ratio":               round(float(ratio), 4),
+            "n_rows":              int(len(era_data)),
+            "feature_importances": {
+                feat: round(float(imp), 4)
+                for feat, imp in importances.items()
+            },
         }
 
         print(f"\n  {era_name} (n={len(era_data)})")
@@ -293,7 +289,17 @@ def analyse_era_importance(dataset):
     return results
 
 
-# ── Step 4: Plot ───────────────────────────────────────────────────────────────
+# ── Step 4: Save era importance to JSON ────────────────────────────────────────
+
+def save_era_importance(era_results, outputs_dir):
+    """Save era importance dict to JSON so server.py can serve it to the dashboard."""
+    out_path = os.path.join(outputs_dir, "f1_era_importance.json")
+    with open(out_path, "w") as f:
+        json.dump(era_results, f, indent=2)
+    print(f"\n  ✓ Saved {out_path}")
+
+
+# ── Step 5: Plot ───────────────────────────────────────────────────────────────
 
 def plot_results(importances, era_results, outputs_dir=None):
     if outputs_dir is None:
@@ -314,7 +320,7 @@ def plot_results(importances, era_results, outputs_dir=None):
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     fig.patch.set_facecolor(COLOUR["bg"])
     fig.suptitle(
-        "RANDOM FOREST — STRATEGY VARIANCE IMPACT ON RACE OUTCOMES",
+        "XGBOOST — STRATEGY VARIANCE IMPACT ON RACE OUTCOMES",
         fontsize=13, fontweight="bold", color=COLOUR["text"],
         fontfamily="monospace"
     )
@@ -392,7 +398,6 @@ def plot_results(importances, era_results, outputs_dir=None):
 def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_conditions=None, start=1994, end=2010, no_plot=False, outputs_dir=None):
     years = list(range(start, end + 1))
 
-    # Default outputs dir to a folder next to rf.py
     if outputs_dir is None:
         outputs_dir = os.path.join(_HERE, "outputs")
     os.makedirs(outputs_dir, exist_ok=True)
@@ -420,8 +425,8 @@ def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_condition
     print("\n── Era-by-Era Importance Analysis ───────────────────────────")
     era_results = analyse_era_importance(dataset)
 
-    if not no_plot:
-        plot_results(importances, era_results, outputs_dir)
+    # ── Save era importance JSON for the dashboard ─────────────────────────────
+    save_era_importance(era_results, outputs_dir)
 
     # ── Championship simulation ────────────────────────────────────────────────
     try:

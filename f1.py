@@ -600,9 +600,6 @@ def run(dataset, model, no_plot=False, outputs_dir=None):
         for r in perf_flips:
             print(f"    {r['year']}  real: {r['real_winner']:<22} perfect: {r['perf_winner']}")
 
-        if not no_plot:
-            plot_sweep(sweep, dataset, outputs_dir)
-
     return sweep
 
 
@@ -677,9 +674,6 @@ def main():
                   f"({perf_winner['perfect_points']:.1f} pts)")
         else:
             print(f"\n  ✓ Same champion: {pred_winner['driver']}")
-
-        if not args.no_plot:
-            plot_single_season(args.year, standings, year_df, outputs_dir)
 
     else:
         years = sorted(dataset[

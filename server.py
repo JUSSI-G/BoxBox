@@ -14,10 +14,10 @@ Usage:
 Endpoints:
     GET  /                      — serves index.html
     GET  /api/status            — pipeline status + output file list
-    POST /api/run               — start full pipeline (analyser → rf → f1)
+    POST /api/run               — start full pipeline (analyser → xgb → f1)
     POST /api/run/season        — simulate a single season
     GET  /api/stream            — SSE stream of live pipeline log output
-    GET  /api/results           — sweep CSV as JSON for the dashboard
+    GET  /api/results           — sweep CSV + era importance JSON as JSON for dashboard
     GET  /outputs/<filename>    — serve output PNGs and CSVs
 """
 
@@ -42,10 +42,6 @@ _last_run         = None
 
 
 def _stream_subprocess(cmd):
-    """
-    Run cmd as subprocess, push every line into _log_queue.
-    Browser reads lines via /api/stream (SSE).
-    """
     global _pipeline_running, _last_run
 
     with _pipeline_lock:
@@ -119,7 +115,7 @@ def status():
 
 @app.route("/api/run", methods=["POST"])
 def run_pipeline():
-    """Start the full pipeline: analyser → rf → f1."""
+    """Start the full pipeline: analyser → xgb → f1."""
     if _pipeline_running:
         return jsonify({"error": "Pipeline already running"}), 409
 
@@ -127,7 +123,6 @@ def run_pipeline():
     start = body.get("start", 1994)
     end   = body.get("end",   2024)
 
-    # Always headless on server — PNGs are saved to outputs/ and served
     cmd = [
         sys.executable,
         os.path.join(_HERE, "analyser.py"),
@@ -171,11 +166,6 @@ def run_season():
 
 @app.route("/api/stream")
 def stream():
-    """
-    Server-Sent Events — browser connects and receives live log lines.
-    Each message: data: "<json-encoded line>"
-    Special tokens: __START__  __DONE__  __ERROR__  __HEARTBEAT__
-    """
     def event_stream():
         while True:
             try:
@@ -199,16 +189,19 @@ def stream():
 
 @app.route("/api/results")
 def results():
-    """Return sweep CSV + metadata as JSON for the live dashboard."""
-    sweep_path   = os.path.join(OUTPUTS_DIR, "f1_simulation_sweep.csv")
-    dataset_path = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
+    """Return sweep CSV + era importance + metadata as JSON for the dashboard."""
+    sweep_path        = os.path.join(OUTPUTS_DIR, "f1_simulation_sweep.csv")
+    dataset_path      = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
+    era_imp_path      = os.path.join(OUTPUTS_DIR, "f1_era_importance.json")
 
     out = {
-        "sweep":        [],
-        "dataset_rows": 0,
-        "images":       {},
+        "sweep":           [],
+        "dataset_rows":    0,
+        "images":          {},
+        "era_importance":  {},   # ← new: variance/grid ratio per era
     }
 
+    # ── Sweep CSV ──────────────────────────────────────────────────────────────
     if os.path.exists(sweep_path):
         with open(sweep_path, newline="") as f:
             for row in csv.DictReader(f):
@@ -223,12 +216,15 @@ def results():
                 row["perf_flips"]  = row.get("perf_flips",  "False") == "True"
                 out["sweep"].append(row)
 
+    # ── Dataset row count ──────────────────────────────────────────────────────
     if os.path.exists(dataset_path):
         with open(dataset_path) as f:
             out["dataset_rows"] = sum(1 for _ in f) - 1
 
-    for img in ["f1_rf_results.png", "f1_sweep_simulation.png"]:
-        out["images"][img] = os.path.exists(os.path.join(OUTPUTS_DIR, img))
+    # ── Era importance JSON ────────────────────────────────────────────────────
+    if os.path.exists(era_imp_path):
+        with open(era_imp_path) as f:
+            out["era_importance"] = json.load(f)
 
     return jsonify(out)
 
