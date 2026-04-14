@@ -1,8 +1,22 @@
 # BoxBox
-F1 race strategy decision-support tool using UDP telemetry from F1 25 and real-world data from OpenF1
 
+## What it does
+Text here
 
-- Have modern UDP and realworld data.
-- Have old historic data.
-- Do a strategy decision toll based on the data gathered
-- Simulate if it would it have made a difference in the old times 
+##Setup
+**1. Clone the repo**
+```bash
+git clone https://github.com/JUSSI-G/BoxBox.git
+cd BoxBox
+```
+ 
+**2. Create and activate a virtual environment**
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+```
+ 
+**3. Install dependencies**
+```powershell
+pip install -r requirements.txt
+```

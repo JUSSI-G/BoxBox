@@ -1,0 +1,8 @@
+flask
+xgboost
+scikit-learn
+pandas
+numpy
+matplotlib
+fastf1
+requests
