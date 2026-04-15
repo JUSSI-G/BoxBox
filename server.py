@@ -198,7 +198,7 @@ def results():
         "sweep":           [],
         "dataset_rows":    0,
         "images":          {},
-        "era_importance":  {},   # ← new: variance/grid ratio per era
+        "era_importance":  {},  
     }
 
     # ── Sweep CSV ──────────────────────────────────────────────────────────────

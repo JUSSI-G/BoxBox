@@ -54,10 +54,10 @@ COLOUR = {
 }
 
 FEATURE_COLS = [
-    "grid_position",          # starting position; proxy for car quality (Heilmeier et al. 2018)
-    "avg_window_error_laps",  # laps deviated from optimal pit window (Heilmeier et al. 2018)
-    "window_penalty_s",       # time cost of pit window error (Heilmeier et al. 2018)
-    "exec_penalty_s",         # pit stop execution time vs fastest in race (Heilmeier et al. 2018)
+    "grid_position",          # proxy for car quality (Heilmeier et al. 2018)
+    "avg_window_error_laps",  # laps deviated from optimal pit window (Phillips 2014)
+    "window_penalty_s",       # time cost of pit window error (Phillips 2014)
+    "exec_penalty_s",         # pit stop execution time vs fastest in race (author)
     "era_code",               # ordinal software era encoding (author classification)
     "wet_race",               # 1 if wet surface during race (Phillips 2014; FastF1 2018+)
     "sc_laps",                # safety car laps (FastF1 2018+; 0 for pre-2018)

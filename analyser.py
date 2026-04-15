@@ -77,7 +77,7 @@ def position_to_points(position, year):
     except Exception:
         return 0
 
-# ── Tyre degradation constants (Heilmeier et al. 2018) ────────────────────────
+# ── Tyre degradation constants ( Phillips (2014) ) ────────────────────────
 TYRE_DEG_PENALTY_S_PER_LAP = {
     1994: 0.45,
     2000: 0.42,
@@ -413,19 +413,20 @@ def optimal_pit_laps(n_stops, total_laps, deg_rate):
                          for i in range(1, n_stops + 1)]
 
 
-def compute_pit_window_errors(pitstops_df, year):
+def compute_pit_window_errors(pitstops_df, year, race_laps=None):
     if pitstops_df.empty or "Year" not in pitstops_df.columns:
         return pd.DataFrame()
     year_df    = pitstops_df[pitstops_df["Year"] == year].copy()
     if year_df.empty:
         return pd.DataFrame()
-    total_laps = TYPICAL_RACE_LAPS.get(year, 60)
     deg_rate   = get_tyre_deg_penalty(year)
     results    = []
     for (race, driver), grp in year_df.groupby(["Race", "DriverName"]):
         grp         = grp.sort_values("Lap")
         actual_laps = grp["Lap"].tolist()
         n_stops     = len(actual_laps)
+        race_key    = race.lower().strip()
+        total_laps  = (race_laps or {}).get(race_key) or TYPICAL_RACE_LAPS.get(year, 60)
         opt         = optimal_pit_laps(n_stops, total_laps, deg_rate)
         errors      = [abs(a - o) for a, o in zip(actual_laps, opt)]
         avg_err     = float(np.mean(errors))
