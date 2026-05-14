@@ -90,7 +90,6 @@ h2 em{font-style:normal;color:var(--amber)}
 .chart-title{font-family:var(--cond);font-size:14px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
 .chart-title.amber{color:var(--amber)}
 .chart-subtitle{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:4px;line-height:1.7}
-.thesis-tag{font-family:var(--mono);font-size:9px;padding:3px 10px;border:1px solid var(--amber);color:var(--amber);white-space:nowrap;flex-shrink:0}
 .chart-badge{font-family:var(--mono);font-size:9px;padding:2px 8px;border:1px solid var(--border);color:var(--muted);white-space:nowrap;flex-shrink:0}
 .chart-wrap{position:relative;height:220px}
 .chart-wrap.tall{height:290px}
@@ -180,53 +179,42 @@ Single season:   f1.py --year YYYY (needs existing dataset)</span></div>
     </div>
 
     <div class="tab-content" id="content-pipeline">
-      <div class="section-label">Architecture</div>
+      <div class="section-label">Pipeline</div>
       <h2>Three-file <em>pipeline</em></h2>
-      <p style="color:#555;font-size:13px;margin-bottom:1.5rem;max-width:580px">One command runs everything. No hardcoded correction factors.</p>
+      <p style="color:#555;font-size:13px;margin-bottom:1.5rem;max-width:580px">One command runs everything.</p>
       <div class="pipe-row">
         <div class="pipe-block">
           <div class="pipe-num">01</div><div class="pipe-file">analyser.py</div>
           <div class="pipe-title">Variance Analyser</div>
-          <div class="pipe-desc">Loads pitstops.csv + Kaggle CSV. Computes pit window errors and execution penalties using the Heilmeier et al. (2018) tyre degradation model. Fetches grid positions from Ergast API.</div>
+          <div class="pipe-desc">Loads pit stop CSVs. Computes pit window errors and execution penalties. Fetches grid positions from Ergast.</div>
           <div class="pipe-outs"><div class="pipe-out">&rarr; window_penalty_s</div><div class="pipe-out">&rarr; exec_penalty_s</div><div class="pipe-out">&rarr; avg_window_error_laps</div><div class="pipe-out">&rarr; era_code</div></div>
         </div>
         <div class="pipe-block">
           <div class="pipe-num">02</div><div class="pipe-file">xgb.py</div>
           <div class="pipe-title">XGBoost Model</div>
-          <div class="pipe-desc">Trains XGBoostRegressor on 1994–2011, tests on 2012–2024. Trains separate model per era for importance analysis. Saves era importance JSON for the dashboard.</div>
-          <div class="pipe-outs"><div class="pipe-out">&rarr; f1_rf_dataset.csv</div><div class="pipe-out">&rarr; f1_era_importance.json</div></div>
+          <div class="pipe-desc">Trains on 1994-2011, tests on 2012-2024. Runs per-era importance analysis. Saves results for the dashboard.</div>
+          <div class="pipe-outs"><div class="pipe-out">&rarr; f1_xgb_dataset.csv</div><div class="pipe-out">&rarr; f1_era_importance.json</div></div>
         </div>
         <div class="pipe-block">
           <div class="pipe-num">03</div><div class="pipe-file">f1.py</div>
           <div class="pipe-title">Championship Simulator</div>
-          <div class="pipe-desc">Zeros variance features per driver-race, keeps grid + era fixed. Predicts points under both scenarios. Flags seasons where the title would have changed.</div>
+          <div class="pipe-desc">Zeros variance features per driver-race, keeps grid and era fixed. Flags seasons where perfect strategy would have changed the title.</div>
           <div class="pipe-outs"><div class="pipe-out">&rarr; f1_simulation_sweep.csv</div></div>
         </div>
       </div>
-      <div class="section-label">Research Question</div>
-      <div style="border-left:3px solid var(--amber);padding:1.25rem 1.5rem;background:rgba(255,184,0,.04);margin-bottom:2rem">
-        <div style="font-family:var(--cond);font-size:1.2rem;font-weight:600;line-height:1.5">"Does strategy variance predict race outcome, and does this relationship change across software eras — indicating that software reduced the impact of strategy errors over time?"</div>
-      </div>
-      <div class="section-label">Counterfactual Method</div>
+      <div class="section-label">How it works</div>
       <div style="background:var(--card);border:1px solid var(--border);overflow:hidden;margin-bottom:2rem">
         <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#0d0d0d;border-bottom:1px solid var(--border)">
           <div style="width:10px;height:10px;border-radius:50%;background:#ff5f57"></div><div style="width:10px;height:10px;border-radius:50%;background:#febc2e"></div><div style="width:10px;height:10px;border-radius:50%;background:#28c840"></div>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:4px">f1.py — predict_perfect_strategy()</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:4px">f1.py - predict_perfect_strategy()</span>
         </div>
         <pre style="padding:1.25rem;font-family:var(--mono);font-size:12px;line-height:1.8;color:#888;overflow-x:auto"><span style="color:#333"># Zero variance features, keep car + era fixed</span>
 X_perfect = X_actual.copy()
 <span style="color:var(--red)">for</span> col <span style="color:var(--red)">in</span> VARIANCE_FEATURES:
     X_perfect[col] = <span style="color:#a78bfa">0.0</span>
 
-dataset[<span style="color:var(--green)">"rf_predicted_points"</span>] = model.predict(X_actual)
-dataset[<span style="color:var(--green)">"rf_perfect_points"</span>]   = model.predict(X_perfect)</pre>
-      </div>
-      <div class="section-label">Citations</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border)">
-        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">Heilmeier et al. 2018</div><div style="font-size:13px;color:#555">A Race Simulation for Strategy Decisions in Circuit Motorsports. IEEE ITSC. DOI: 10.1109/ITSC.2018.8570012.</div></div>
-        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">Heilmeier et al. 2020</div><div style="font-size:13px;color:#555">Virtual Strategy Engineer. Applied Sciences. DOI: 10.3390/app10217805.</div></div>
-        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">scikit-learn / XGBoost</div><div style="font-size:13px;color:#555">Permutation Importance with Multicollinear Features. Justifies removal of total_variance_s. XGBoost Test R²: 0.371 vs RF 0.237.</div></div>
-        <div style="background:var(--card);padding:1.25rem"><div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:6px">era_code</div><div style="font-size:13px;color:#555">Author classification. Maps seasons to software eras based on known F1 technology adoption milestones (1994, 2000, 2006, 2012, 2018).</div></div>
+dataset[<span style="color:var(--green)">"xgb_predicted_points"</span>] = model.predict(X_actual)
+dataset[<span style="color:var(--green)">"xgb_perfect_points"</span>]   = model.predict(X_perfect)</pre>
       </div>
     </div>
   </main>
@@ -317,7 +305,7 @@ function renderCharts(d){
       </div>
       <div class="chart-wrap tall"><canvas id="c-ratio"></canvas></div>
       <div class="ratio-note">
-        <span>&#9660; Below 1.0 = car quality dominates strategy variance</span>
+        <span>&#9660; Below 1.0 = car quality/driver dominates strategy variance</span>
         <span>Lowest ratio: <strong>${minRatio}</strong> in <strong>${minEra}</strong></span>
         <span style="margin-left:auto;color:#333">Dashed line = parity (ratio 1.0)</span>
       </div>
@@ -381,7 +369,7 @@ function renderCharts(d){
         const vw=Math.round((ed.variance_importance/mxV)*90);
         const gw=Math.round((ed.grid_importance/mxG)*90);
         const col=eraColor(e);
-        const interp=ed.ratio>1.0?'<span style="color:var(--red)">Variance &gt; car</span>':ed.ratio>0.5?'<span style="color:var(--amber)">Balanced</span>':'<span style="color:var(--green)">Car dominates</span>';
+        const interp=ed.ratio>1.0?'<span style="color:var(--red)">Variance &gt; car</span>':ed.ratio>0.5?'<span style="color:var(--amber)">Balanced</span>':'<span style="color:var(--green)">Car/Driver dominates</span>';
         return`<tr><td><span style="color:${col}">${e.split('(')[0].trim()}</span><br><span style="color:#2a2a2a;font-size:9px">${(e.match(/\(([^)]+)\)/)||[])[1]||''}</span></td><td style="color:var(--muted)">${ed.n_rows}</td><td><div class="imp-bar-cell"><span class="imp-bar" style="width:${vw}px;background:#ffb800;opacity:.75"></span><span style="color:var(--amber)">${ed.variance_importance.toFixed(4)}</span></div></td><td><div class="imp-bar-cell"><span class="imp-bar" style="width:${gw}px;background:#3d9eff;opacity:.75"></span><span style="color:var(--blue)">${ed.grid_importance.toFixed(4)}</span></div></td><td>${ratioChip(ed.ratio)}</td><td>${interp}</td></tr>`;
       }).join('');
     }

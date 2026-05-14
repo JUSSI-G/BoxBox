@@ -1,19 +1,7 @@
 """
-F1 Strategy Variance Analyser  v5.0
-=====================================
-Bachelor's Thesis Tool — LUT University
-"The impact of software engineering on strategy development in Formula One"
+F1 Strategy Variance Analyser
 
-Changes from v4:
-    REMOVED — Ergast API dependency (no more rate limiting)
-    REMOVED — Cache system (no longer needed)
-    ADDED   — Formula1_Pitstop_Data_1950-2024_all_rounds.csv as single data source
-    ADDED   — 2011-2024 pit stop data from the new file
-    EXTENDED — Analysis now covers 1994-2024 instead of 1994-2010
-
-Data sources:
-    pitstops.csv                                  — pit stop timing 1994-2010
-    Formula1_Pitstop_Data_1950-2024_all_rounds.csv — positions + pit data 2011-2024
+Loads pit stop data, computes window/execution penalties, and drives xgb.py.
 
 Usage:
     python analyser.py
@@ -26,21 +14,6 @@ import numpy as np
 import ast, argparse, os, json, time, sys
 import requests
 
-# ── Path resolution ────────────────────────────────────────────────────────────
-# All paths are resolved relative to THIS file so the project works regardless
-# of the working directory the user runs the script from.
-#
-# Expected project layout:
-#   BOXBOX/
-#   ├── analyser.py
-#   ├── rf.py
-#   ├── f1.py
-#   ├── data/
-#   │   ├── pitstops.csv
-#   │   ├── Formula1_Pitstop_Data_1950-2024_all_rounds.csv
-#   │   └── f1_cache/
-#   └── outputs/           ← all generated files go here
-
 _HERE       = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR    = os.path.join(_HERE, "data")
 OUTPUTS_DIR = os.path.join(_HERE, "outputs")
@@ -50,7 +23,6 @@ os.makedirs(DATA_DIR,    exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR,   exist_ok=True)
 
-# Ensure sibling .py files are importable regardless of cwd
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
@@ -77,7 +49,7 @@ def position_to_points(position, year):
     except Exception:
         return 0
 
-# ── Tyre degradation constants ( Phillips (2014) ) ────────────────────────
+# ── Tyre degradation constants ────────────────────────────────────────────
 TYRE_DEG_PENALTY_S_PER_LAP = {
     1994: 0.45,
     2000: 0.42,
@@ -120,12 +92,7 @@ def get_era_label(year):
 
 
 # ── Historical wet race lookup (1994–2017) ─────────────────────────────────────
-# Source: Phillips, A. (2014). "Who was the best wet-weather driver?"
-#         f1metrics. https://f1metrics.wordpress.com/2014/06/04/
-#         who-was-the-best-wet-weather-driver/
-#         2014–2017 rounds confirmed via author comments on same article.
-# Definition: wet if wet surface at any point during race (incl. start).
-# Coverage: 1994–2017. FastF1 (2018+) handled by fetch_race_conditions().
+# 2018+ is covered by FastF1 in fetch_race_conditions()
 
 WET_RACE_ROUNDS = {
     (1994, 15),   # Japan
@@ -476,18 +443,14 @@ def compute_undercut_missed(window_errors):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="F1 Strategy Variance Analyser v5 — LUT University Thesis"
+        description="F1 Strategy Variance Analyser"
     )
     parser.add_argument("--start",   type=int, default=1994)
     parser.add_argument("--end",     type=int, default=2024)
     parser.add_argument("--no-plot", action="store_true")
-    parser.add_argument("--model",   type=str, default="xgb",
-                        choices=["rf", "xgb"],
-                        help="Model to use: rf (Random Forest) or xgb (XGBoost, default)")
     args = parser.parse_args()
 
-    print("\n  F1 Strategy Variance Analyser  v5.0")
-    print("  LUT University — Bachelor's Thesis\n")
+    print("\n  F1 Strategy Variance Analyser\n")
 
     # Load data
     pitstops_old          = load_pitstops_csv(PITSTOPS_CSV)
@@ -510,14 +473,9 @@ def main():
     }
 
     try:
-        if args.model == "xgb":
-            from xgb import run as run_rf
-            print("\n  Model: XGBoost (xgb.py)")
-        else:
-            from rf import run as run_rf
-            print("\n  Model: Random Forest (rf.py)")
+        from xgb import run as run_xgb
     except ImportError:
-        print("  ✗ rf.py not found — make sure it is in the same folder as analyser.py")
+        print("  ✗ xgb.py not found — make sure it is in the same folder as analyser.py")
         return
 
     print(f"\n  Fetching grid positions {args.start}–{args.end} from Ergast...")
@@ -526,7 +484,7 @@ def main():
     print(f"  Race conditions loading (FastF1 {FASTF1_MIN_YEAR}–{args.end} + historical table)...")
     race_conditions = load_all_race_conditions(args.start, args.end)
 
-    run_rf(
+    run_xgb(
         pitstops_df=pitstops_df,
         ergast_results_by_year=ergast_by_year,
         grid_positions=grid_positions,

@@ -1,14 +1,8 @@
 """
 F1 Strategy Outcome Predictor — XGBoost
-=========================================
-Bachelor's Thesis Tool — LUT University
-"The impact of software engineering on strategy development in Formula One"
 
-XGBoost model for predicting race points from strategy variance features.
-Default model — use rf.py for Random Forest baseline comparison.
-
-Usage: triggered by analyser.py (default) or analyser.py --model xgb
-       Use analyser.py --model rf for Random Forest baseline.
+Builds the driver-race dataset, trains an XGBoost model on strategy variance
+features, and runs per-era importance analysis. Triggered by analyser.py.
 """
 
 try:
@@ -44,13 +38,13 @@ COLOUR = {
 }
 
 FEATURE_COLS = [
-    "grid_position",          # proxy for car quality (Heilmeier et al. 2018)
-    "avg_window_error_laps",  # laps deviated from optimal pit window (Phillips 2014)
-    "window_penalty_s",       # time cost of pit window error (Phillips 2014)
-    "exec_penalty_s",         # pit stop execution time vs fastest in race (author)
-    "era_code",               # ordinal software era encoding (author classification)
-    "wet_race",               # 1 if wet surface during race (Phillips 2014; FastF1 2018+)
-    "sc_laps",                # safety car laps (FastF1 2018+; 0 for pre-2018)
+    "grid_position",
+    "avg_window_error_laps",
+    "window_penalty_s",
+    "exec_penalty_s",
+    "era_code",
+    "wet_race",
+    "sc_laps",
 ]
 
 ERA_LABELS_ORDERED = [
@@ -224,13 +218,7 @@ def train_and_evaluate(dataset):
 # ── Step 3: Era importance analysis ───────────────────────────────────────────
 
 def analyse_era_importance(dataset):
-    """
-    Train separate models per era.
-    Compares strategy variance importance vs grid position per era.
-    A decreasing variance/grid ratio over time = software reduced strategy errors.
-
-    Returns results dict AND saves to f1_era_importance.json for the dashboard.
-    """
+    """Train per-era models, compare variance vs grid importance. Saves to f1_era_importance.json."""
     era_groups = {
         "Pre-software (1994-1999)":      (1994, 1999),
         "Early tools (2000-2005)":       (2000, 2005),
@@ -272,7 +260,6 @@ def analyse_era_importance(dataset):
         grid_imp         = importances["grid_position"]
         ratio            = variance_imp / grid_imp if grid_imp > 0 else 0
 
-        # Store all per-feature importances too, for the dashboard
         results[era_name] = {
             "era_start":           era_start,
             "era_end":             era_end,
@@ -298,7 +285,7 @@ def analyse_era_importance(dataset):
 # ── Step 4: Save era importance to JSON ────────────────────────────────────────
 
 def save_era_importance(era_results, outputs_dir):
-    """Save era importance dict to JSON so server.py can serve it to the dashboard."""
+    """Save era importance to JSON for the dashboard."""
     out_path = os.path.join(outputs_dir, "f1_era_importance.json")
     with open(out_path, "w") as f:
         json.dump(era_results, f, indent=2)
@@ -391,10 +378,6 @@ def plot_results(importances, era_results, outputs_dir=None):
         ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    out_path = os.path.join(outputs_dir, "f1_rf_results.png")
-    plt.savefig(out_path, dpi=150,
-                bbox_inches="tight", facecolor=COLOUR["bg"])
-    print(f"\n  ✓ Saved {out_path}")
     plt.show()
     plt.close()
 
@@ -419,7 +402,7 @@ def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_condition
         print("  ✗ Could not build dataset")
         return
 
-    dataset_path = os.path.join(outputs_dir, "f1_rf_dataset.csv")
+    dataset_path = os.path.join(outputs_dir, "f1_xgb_dataset.csv")
     dataset.to_csv(dataset_path, index=False)
     print(f"  ✓ Saved {dataset_path}")
 

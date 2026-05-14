@@ -1,49 +1,12 @@
 """
-F1 Championship Simulator  v4.0
-================================
-Bachelor's Thesis Tool — LUT University
-"The impact of software engineering on strategy development in Formula One"
+F1 Championship Simulator
 
-WHAT THIS FILE DOES:
-    Uses the trained Random Forest model from rf.py to answer the
-    counterfactual question:
-
-        "If every driver had used perfect pit strategy, would the
-         championship winner have changed?"
-
-    No hardcoded correction factors. No assumed field spread values.
-    The simulation is entirely driven by what the RF learned from real data.
-
-HOW IT WORKS:
-    1. Load f1_rf_dataset.csv (produced by analyser.py + rf.py)
-    2. Train the RF model identically to rf.py
-    3. For each driver-race, create a "perfect strategy" copy by zeroing
-       out window_penalty_s, exec_penalty_s, and avg_window_error_laps
-       — keeping grid_position and era_code unchanged (car quality is fixed)
-    4. Run both actual and perfect-strategy features through the RF
-       to get predicted points under each scenario
-    5. Sum predicted points per driver per season → championship standings
-    6. Compare: does the predicted champion change?
-
-WHY THIS IS VALID:
-    The RF was trained on real historical data where variance and points
-    are both observed. Zeroing the variance features is a standard
-    counterfactual prediction — asking the model to extrapolate to a
-    scenario where strategy errors were eliminated. The RF's own learned
-    weights determine how much those features matter; there are no
-    manually chosen correction coefficients.
-
-    Limitation acknowledged: zeroing variance features is mild
-    extrapolation below the minimum observed values. This is noted
-    as a limitation in the thesis methodology section.
-
-RELATIONSHIP TO OTHER FILES:
-    analyser.py  →  computes variance metrics from raw pitstop data
-    rf.py        →  trains RF, saves f1_rf_dataset.csv, returns model
-    f1.py (this) →  loads dataset + model, runs championship simulation
+Uses the trained XGBoost model from xgb.py to simulate what-if championships:
+zeros variance features per driver-race (keeping car quality fixed) and checks
+whether perfect pit strategy would have changed the title.
 
 Usage:
-    python analyser.py          # produces f1_rf_dataset.csv via rf.py
+    python analyser.py          # produces f1_xgb_dataset.csv via xgb.py
     python f1.py                # simulate all years in dataset
     python f1.py --year 2010    # single season
     python f1.py --start 1994 --end 2024
@@ -61,19 +24,19 @@ except Exception:
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 from sklearn.model_selection import cross_val_score
 
 # ── Path resolution ────────────────────────────────────────────────────────────
 _HERE       = os.path.dirname(os.path.abspath(__file__))
 OUTPUTS_DIR = os.path.join(_HERE, "outputs")
-RF_DATASET_CSV = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
+XGB_DATASET_CSV = os.path.join(OUTPUTS_DIR, "f1_xgb_dataset.csv")
 
 # Ensure sibling files are importable regardless of cwd
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-# Must match rf.py exactly — the model is trained on these columns
+# Must match xgb.py exactly — the model is trained on these columns
 FEATURE_COLS = [
     "grid_position",
     "avg_window_error_laps",
@@ -93,8 +56,7 @@ VARIANCE_FEATURES = [
 ]
 
 # ── Real-world F1 champions (ground truth) ────────────────────────────────────
-# Used in run_sweep() to populate real_winner — NOT derived from the dataset,
-# because actual_points in the RF dataset are race-level and may not sum to the
+# Not derived from the dataset — race-level actual_points don't sum to the
 # correct championship total due to data coverage gaps and driver name variants.
 REAL_CHAMPIONS = {
     1994: "Michael Schumacher",
@@ -146,10 +108,7 @@ COLOUR = {
 # ── Model training ─────────────────────────────────────────────────────────────
 
 def train_model(dataset):
-    """
-    Train RF identically to rf.py — 1994-2011 train, 2012-2024 test.
-    Called when f1.py runs standalone (model not passed in from rf.py).
-    """
+    """Train XGBoost on 1994-2011, test on 2012-2024. Used in standalone mode."""
     train = dataset[dataset["year"] <= 2011].copy()
     test  = dataset[dataset["year"] >  2011].copy()
 
@@ -159,11 +118,16 @@ def train_model(dataset):
     X_train = train[FEATURE_COLS].fillna(0)
     y_train = train["points_scored"]
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=6,
-        min_samples_leaf=5,
+    model = XGBRegressor(
+        n_estimators=400,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         random_state=42,
+        verbosity=0,
     )
     model.fit(X_train, y_train)
 
@@ -191,18 +155,8 @@ def train_model(dataset):
 
 def predict_perfect_strategy(dataset, model):
     """
-    For every driver-race predict points under two scenarios:
-
-      actual:  features as observed (real historical variance)
-      perfect: variance features zeroed, grid_position + era_code unchanged
-
-    The difference in predicted points is entirely determined by what the
-    RF learned — no correction coefficients are applied manually.
-
-    Returns dataset with added columns:
-      rf_predicted_points  — RF prediction using actual features
-      rf_perfect_points    — RF prediction with variance features zeroed
-      rf_points_gain       — difference (perfect − actual)
+    Predict points under actual and perfect-strategy (variance features zeroed)
+    scenarios. Adds xgb_predicted_points, xgb_perfect_points, xgb_points_gain.
     """
     X_actual  = dataset[FEATURE_COLS].fillna(0)
     X_perfect = X_actual.copy()
@@ -210,10 +164,10 @@ def predict_perfect_strategy(dataset, model):
         X_perfect[col] = 0.0
 
     dataset = dataset.copy()
-    dataset["rf_predicted_points"] = model.predict(X_actual)
-    dataset["rf_perfect_points"]   = model.predict(X_perfect)
-    dataset["rf_points_gain"]      = (
-        dataset["rf_perfect_points"] - dataset["rf_predicted_points"]
+    dataset["xgb_predicted_points"] = model.predict(X_actual)
+    dataset["xgb_perfect_points"]   = model.predict(X_perfect)
+    dataset["xgb_points_gain"]      = (
+        dataset["xgb_perfect_points"] - dataset["xgb_predicted_points"]
     ).round(3)
 
     return dataset
@@ -222,26 +176,20 @@ def predict_perfect_strategy(dataset, model):
 # ── Championship simulation ────────────────────────────────────────────────────
 
 def simulate_season(year_df):
-    """
-    Given one season's driver-race rows (with rf predictions already added),
-    produce championship standings under both scenarios.
-
-    Uses RF-predicted points so both sides come from the same model —
-    the comparison is internally consistent.
-    """
+    """Produce championship standings under actual and perfect-strategy scenarios."""
     hist = (
-        year_df.groupby("driver")["rf_predicted_points"]
+        year_df.groupby("driver")["xgb_predicted_points"]
         .sum().reset_index()
-        .rename(columns={"rf_predicted_points": "predicted_points"})
+        .rename(columns={"xgb_predicted_points": "predicted_points"})
         .sort_values("predicted_points", ascending=False)
         .reset_index(drop=True)
     )
     hist["predicted_rank"] = hist.index + 1
 
     perf = (
-        year_df.groupby("driver")["rf_perfect_points"]
+        year_df.groupby("driver")["xgb_perfect_points"]
         .sum().reset_index()
-        .rename(columns={"rf_perfect_points": "perfect_points"})
+        .rename(columns={"xgb_perfect_points": "perfect_points"})
         .sort_values("perfect_points", ascending=False)
         .reset_index(drop=True)
     )
@@ -281,8 +229,7 @@ def run_sweep(dataset, years):
         pred_winner = standings.sort_values("predicted_points", ascending=False).iloc[0]
         perf_winner = standings.sort_values("perfect_points",   ascending=False).iloc[0]
 
-        # Ground-truth champion from lookup — not derived from actual_points
-        # (race-level sums are unreliable due to data coverage gaps).
+        # Use lookup table, not summed actual_points — data coverage gaps make sums unreliable.
         real_champ  = REAL_CHAMPIONS.get(year, "Unknown")
 
         pred_flips  = pred_winner["driver"] != real_champ
@@ -291,7 +238,7 @@ def run_sweep(dataset, years):
 
         era_label    = year_df["era_label"].iloc[0]
         avg_variance = year_df[VARIANCE_FEATURES].sum(axis=1).mean()
-        avg_gain     = year_df["rf_points_gain"].mean()
+        avg_gain     = year_df["xgb_points_gain"].mean()
 
         print(f"\n  {year} -- {era_label}")
         print(f"    Real champion:              {real_champ}")
@@ -337,10 +284,7 @@ def setup_style():
     })
 
 
-def plot_single_season(year, standings, year_df, outputs_dir=None):
-    if outputs_dir is None:
-        outputs_dir = os.path.join(_HERE, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
+def plot_single_season(year, standings, year_df):
     setup_style()
     fig = plt.figure(figsize=(18, 10))
     fig.patch.set_facecolor(COLOUR["bg"])
@@ -352,7 +296,7 @@ def plot_single_season(year, standings, year_df, outputs_dir=None):
              fontfamily="monospace", va="top")
     fig.text(0.02, 0.935,
              f"Era: {era_label}  ·  "
-             f"Method: RF counterfactual — variance features zeroed  ·  "
+             f"Method: XGBoost counterfactual — variance features zeroed  ·  "
              f"No hardcoded correction factors",
              fontsize=8.5, color=COLOUR["muted"],
              fontfamily="monospace", va="top")
@@ -421,13 +365,13 @@ def plot_single_season(year, standings, year_df, outputs_dir=None):
 
     # ── 5. RF prediction quality scatter ──────────────────────────────────────
     ax5 = fig.add_subplot(gs[1, 1])
-    ax5.scatter(year_df["points_scored"], year_df["rf_predicted_points"],
+    ax5.scatter(year_df["points_scored"], year_df["xgb_predicted_points"],
                 color=COLOUR["blue"], alpha=0.5, s=20, label="Actual vs RF")
-    ax5.scatter(year_df["points_scored"], year_df["rf_perfect_points"],
+    ax5.scatter(year_df["points_scored"], year_df["xgb_perfect_points"],
                 color=COLOUR["green"], alpha=0.5, s=20,
                 label="Actual vs Perfect")
     lim = max(year_df["points_scored"].max(),
-              year_df["rf_perfect_points"].max()) + 2
+              year_df["xgb_perfect_points"].max()) + 2
     ax5.plot([0, lim], [0, lim], color=COLOUR["muted"],
              linestyle="--", linewidth=0.8)
     ax5.set_xlabel("Actual points scored")
@@ -460,7 +404,7 @@ def plot_single_season(year, standings, year_df, outputs_dir=None):
         f"Avg variance/race:",
         f"  {year_df[VARIANCE_FEATURES].sum(axis=1).mean():.2f}s",
         f"Avg RF points gain:",
-        f"  {year_df['rf_points_gain'].mean():.2f}",
+        f"  {year_df['xgb_points_gain'].mean():.2f}",
     ]
     for i, line in enumerate(lines):
         color = COLOUR["amber"] if "★" in line else COLOUR["text"]
@@ -469,17 +413,11 @@ def plot_single_season(year, standings, year_df, outputs_dir=None):
                  fontfamily="monospace", color=color, va="top")
     ax6.set_title("Season Summary")
 
-    outfile = os.path.join(outputs_dir, f"f1_simulation_{year}.png")
-    plt.savefig(outfile, dpi=150, bbox_inches="tight", facecolor=COLOUR["bg"])
-    print(f"  ✓ Saved {outfile}")
     plt.show()
     plt.close()
 
 
-def plot_sweep(sweep_results, dataset, outputs_dir=None):
-    if outputs_dir is None:
-        outputs_dir = os.path.join(_HERE, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
+def plot_sweep(sweep_results, dataset):
     setup_style()
     df    = pd.DataFrame(sweep_results)
     years = df["year"].tolist()
@@ -560,22 +498,14 @@ def plot_sweep(sweep_results, dataset, outputs_dir=None):
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    out_path = os.path.join(outputs_dir, "f1_sweep_simulation.png")
-    plt.savefig(out_path, dpi=150,
-                bbox_inches="tight", facecolor=COLOUR["bg"])
-    print(f"  ✓ Saved {out_path}")
     plt.show()
     plt.close()
 
 
-# ── Public API — called from analyser.py after rf.py trains the model ──────────
+# ── Public API — called from analyser.py after xgb.py trains the model ─────────
 
 def run(dataset, model, no_plot=False, outputs_dir=None):
-    """
-    Entry point when called from the analyser.py pipeline.
-    dataset — the full rf_dataset DataFrame already in memory
-    model   — the trained RandomForestRegressor from rf.py
-    """
+    """Entry point called from the analyser.py pipeline."""
     if outputs_dir is None:
         outputs_dir = os.path.join(_HERE, "outputs")
     os.makedirs(outputs_dir, exist_ok=True)
@@ -607,12 +537,12 @@ def run(dataset, model, no_plot=False, outputs_dir=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="F1 Championship Simulator v4 — LUT University Thesis"
+        description="F1 Championship Simulator"
     )
     parser.add_argument("--year",       type=int,  default=None)
     parser.add_argument("--start",      type=int,  default=1994)
     parser.add_argument("--end",        type=int,  default=2024)
-    parser.add_argument("--dataset",    type=str,  default=RF_DATASET_CSV)
+    parser.add_argument("--dataset",    type=str,  default=XGB_DATASET_CSV)
     parser.add_argument("--outputs",    type=str,  default=OUTPUTS_DIR,
                         help="Directory for output files (default: ./outputs)")
     parser.add_argument("--no-plot",    action="store_true")
@@ -621,13 +551,11 @@ def main():
     outputs_dir = args.outputs
     os.makedirs(outputs_dir, exist_ok=True)
 
-    print("\n  F1 Championship Simulator  v4.0")
-    print("  LUT University — Bachelor's Thesis")
-    print("  Method: RF counterfactual — no hardcoded correction factors\n")
+    print("\n  F1 Championship Simulator\n")
 
     if not os.path.exists(args.dataset):
         print(f"  ✗ Dataset not found: {args.dataset}")
-        print("    Run analyser.py first to generate f1_rf_dataset.csv")
+        print("    Run analyser.py first to generate f1_xgb_dataset.csv")
         return
 
     dataset = pd.read_csv(args.dataset)
@@ -635,7 +563,7 @@ def main():
     print(f"    Years:   {dataset['year'].min()}–{dataset['year'].max()}")
     print(f"    Drivers: {dataset['driver'].nunique()}")
 
-    print("\n── Training RF model ────────────────────────────────────────")
+    print("\n── Training XGBoost model ───────────────────────────────────")
     model = train_model(dataset)
 
     print("\n── Generating counterfactual predictions ────────────────────")
@@ -701,7 +629,7 @@ def main():
                 print(f"    {r['year']}  real: {r['real_winner']:<22} perfect: {r['perf_winner']}")
 
             if not args.no_plot:
-                plot_sweep(sweep_results, dataset, outputs_dir)
+                plot_sweep(sweep_results, dataset)
 
 
 if __name__ == "__main__":

@@ -1,116 +1,27 @@
-# ── F1 Thesis Project ─────────────────────────────────────────────────────────
-
-# Pipeline outputs (generated every run — reproduce with python analyser.py)
-outputs/
-
-# FastF1 & Ergast cache (large, re-fetched automatically on first run)
-data/f1_cache/
-
-# Raw data CSVs (too large for GitHub — share separately)
-data/Formula1_Pitstop_Data_1950-2024_all_rounds.csv
+# Data files (large, share separately)
 data/pitstops.csv
+data/Formula1_Pitstop_Data_1950-2024_all_rounds.csv
+data/lap_time_prog.xlsx
 
-# ── Python ────────────────────────────────────────────────────────────────────
-__pycache__/
-*.py[codz]
-*$py.class
-*.so
-*.pyo
-*.pyd
-*.egg
-*.egg-info/
-MANIFEST
-build/
-dist/
-develop-eggs/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-__pypackages__/
+# Generated at runtime
+data/f1_cache/
+outputs/
+captures/
 
-# ── Virtual environment ────────────────────────────────────────────────────────
+# Python
 venv/
 .venv/
-env/
-ENV/
-env.bak/
-venv.bak/
-.env
-.envrc
-.pixi
+__pycache__/
+*.py[codz]
+*.pyo
+*.pyd
+*.egg-info/
 
-# ── Testing & coverage ────────────────────────────────────────────────────────
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# ── Type checkers ─────────────────────────────────────────────────────────────
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
-.ruff_cache/
-cython_debug/
-
-# ── Editors & IDEs ────────────────────────────────────────────────────────────
+# Editors
 .idea/
 .vscode/
-.spyderproject
-.spyproject
-.ropeproject
-.cursorignore
-.cursorindexingignore
-*.swp
-*.swo
 
-# ── OS ────────────────────────────────────────────────────────────────────────
+# OS
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# ── Flask ─────────────────────────────────────────────────────────────────────
-instance/
-.webassets-cache
-
-# ── Jupyter ───────────────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-profile_default/
-ipython_config.py
-__marimo__/
-
-# ── Misc ──────────────────────────────────────────────────────────────────────
-*.log
-*.bak
-*.manifest
-*.spec
-pip-log.txt
-pip-delete-this-directory.txt
-.pdm-python
-.pdm-build/
-.abstra/
-/site
-.pybuilder/
-target/
-*.mo
-*.pot
-*.sage.py
-.pypirc

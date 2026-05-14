@@ -1,13 +1,9 @@
 """
 F1 Strategy Pipeline — Web Server
-===================================
-Bachelor's Thesis Tool — LUT University
 
-Serves the index.html dashboard and exposes API endpoints
-that trigger the Python pipeline and stream results back live.
+Serves the index.html dashboard and streams pipeline output via SSE.
 
 Usage:
-    pip install flask
     python server.py
     → open http://localhost:5001
 
@@ -17,8 +13,8 @@ Endpoints:
     POST /api/run               — start full pipeline (analyser → xgb → f1)
     POST /api/run/season        — simulate a single season
     GET  /api/stream            — SSE stream of live pipeline log output
-    GET  /api/results           — sweep CSV + era importance JSON as JSON for dashboard
-    GET  /outputs/<filename>    — serve output PNGs and CSVs
+    GET  /api/results           — sweep CSV + era importance JSON for dashboard
+    GET  /outputs/<filename>    — serve output CSVs
 """
 
 from flask import (
@@ -129,7 +125,6 @@ def run_pipeline():
         "--start", str(start),
         "--end",   str(end),
         "--no-plot",
-        "--model", "xgb",
     ]
 
     threading.Thread(target=_stream_subprocess, args=(cmd,), daemon=True).start()
@@ -145,7 +140,7 @@ def run_season():
     body = request.get_json(silent=True) or {}
     year = body.get("year", 2010)
 
-    dataset_path = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
+    dataset_path = os.path.join(OUTPUTS_DIR, "f1_xgb_dataset.csv")
     if not os.path.exists(dataset_path):
         return jsonify({
             "error": "No dataset found — run the full pipeline first"
@@ -191,7 +186,7 @@ def stream():
 def results():
     """Return sweep CSV + era importance + metadata as JSON for the dashboard."""
     sweep_path        = os.path.join(OUTPUTS_DIR, "f1_simulation_sweep.csv")
-    dataset_path      = os.path.join(OUTPUTS_DIR, "f1_rf_dataset.csv")
+    dataset_path      = os.path.join(OUTPUTS_DIR, "f1_xgb_dataset.csv")
     era_imp_path      = os.path.join(OUTPUTS_DIR, "f1_era_importance.json")
 
     out = {
@@ -231,7 +226,6 @@ def results():
 
 if __name__ == "__main__":
     print("\n  F1 Strategy Pipeline — Web Server")
-    print("  LUT University — Bachelor's Thesis")
     print(f"\n  Project root: {_HERE}")
     print(f"  Outputs:      {OUTPUTS_DIR}")
     print("\n  Open → http://localhost:5001\n")
