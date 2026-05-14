@@ -4,10 +4,10 @@ F1 strategy analysis tool. Computes pit stop variance metrics from historical da
 
 ## What it does
 
-1. **Variance analysis** — loads pit stop data (1994–2024), computes pit window errors and execution penalties per driver per race
-2. **XGBoost model** — trains on 1994–2011, tests on 2012–2024, runs per-era feature importance analysis
-3. **Championship simulation** — zeros variance features (keeps car quality fixed), checks which seasons the title would have changed under perfect strategy
-4. **Web dashboard** — interactive UI at `http://localhost:5001` with charts and live pipeline output
+1. **Variance analysis**: loads pit stop data (1994–2024), computes pit window errors and execution penalties per driver per race
+2. **XGBoost model**: trains on 1994–2011, tests on 2012–2024, runs per-era feature importance analysis
+3. **Championship simulation**: zeros variance features (keeps car quality fixed), checks which seasons the title would have changed under perfect strategy
+4. **Web dashboard**: interactive UI at `http://localhost:5001` with charts and live pipeline output
 
 ## Data
 
