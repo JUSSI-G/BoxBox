@@ -13,29 +13,12 @@ from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 import os, sys, json
-try:
-    matplotlib.use("TkAgg")
-except Exception:
-    matplotlib.use("Agg")
 
 # Ensure sibling files are importable regardless of cwd
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-
-COLOUR = {
-    "red":    "#e8003d",
-    "amber":  "#ffb800",
-    "green":  "#00c96e",
-    "blue":   "#3d9eff",
-    "muted":  "#666666",
-    "card":   "#1a1a1a",
-    "bg":     "#0d0d0d",
-    "text":   "#f0f0f0",
-}
 
 FEATURE_COLS = [
     "grid_position",
@@ -289,96 +272,6 @@ def save_era_importance(era_results, outputs_dir):
     with open(out_path, "w") as f:
         json.dump(era_results, f, indent=2)
     print(f"\n  ✓ Saved {out_path}")
-
-
-# ── Step 5: Plot ───────────────────────────────────────────────────────────────
-
-def plot_results(importances, era_results, outputs_dir=None):
-    if outputs_dir is None:
-        outputs_dir = os.path.join(_HERE, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    plt.style.use("dark_background")
-    plt.rcParams.update({
-        "font.family":      "monospace",
-        "axes.facecolor":   COLOUR["card"],
-        "figure.facecolor": COLOUR["bg"],
-        "text.color":       COLOUR["text"],
-        "axes.titlesize":   11,
-        "axes.labelsize":   9,
-        "xtick.labelsize":  8,
-        "ytick.labelsize":  8,
-    })
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.patch.set_facecolor(COLOUR["bg"])
-    fig.suptitle(
-        "XGBOOST — STRATEGY VARIANCE IMPACT ON RACE OUTCOMES",
-        fontsize=13, fontweight="bold", color=COLOUR["text"],
-        fontfamily="monospace"
-    )
-
-    # 1. Overall feature importance
-    ax = axes[0]
-    colors = [
-        COLOUR["amber"] if any(k in f for k in ["window","exec","undercut","variance"])
-        else COLOUR["blue"]
-        for f in importances.index
-    ]
-    ax.barh(range(len(importances)), importances.values, color=colors, alpha=0.85)
-    ax.set_yticks(range(len(importances)))
-    ax.set_yticklabels(importances.index, fontsize=8)
-    ax.set_xlabel("Importance")
-    ax.set_title("Overall Feature Importance\n(amber = strategy variance)")
-    ax.grid(axis="x", alpha=0.3)
-
-    # 2. Variance vs grid importance by era
-    ax = axes[1]
-    if era_results:
-        era_names = list(era_results.keys())
-        var_imp   = [era_results[e]["variance_importance"] for e in era_names]
-        grid_imp  = [era_results[e]["grid_importance"]     for e in era_names]
-        x = np.arange(len(era_names))
-        w = 0.35
-        ax.bar(x - w/2, var_imp,  width=w, color=COLOUR["amber"],
-               alpha=0.85, label="Strategy variance")
-        ax.bar(x + w/2, grid_imp, width=w, color=COLOUR["blue"],
-               alpha=0.85, label="Grid position")
-        ax.set_xticks(x)
-        ax.set_xticklabels(
-            [e.split("(")[0].strip() for e in era_names],
-            rotation=15, ha="right", fontsize=8
-        )
-        ax.set_ylabel("Summed importance")
-        ax.set_title("Variance vs Car Quality by Era")
-        ax.legend(fontsize=8)
-        ax.grid(axis="y", alpha=0.3)
-
-    # 3. Variance/grid ratio (key thesis chart)
-    ax = axes[2]
-    if era_results:
-        ratios = [era_results[e]["ratio"] for e in era_names]
-        bar_colors = [
-            COLOUR["red"]   if r > 1.0 else
-            COLOUR["amber"] if r > 0.5 else
-            COLOUR["green"]
-            for r in ratios
-        ]
-        ax.bar(x, ratios, color=bar_colors, alpha=0.85)
-        ax.axhline(1.0, color="white", linestyle="--", linewidth=1,
-                   label="Variance = Car (1.0)")
-        ax.set_xticks(x)
-        ax.set_xticklabels(
-            [e.split("(")[0].strip() for e in era_names],
-            rotation=15, ha="right", fontsize=8
-        )
-        ax.set_ylabel("Variance / Grid importance")
-        ax.set_title("Strategy Variance Relative Impact\n(decreasing = software helping)")
-        ax.legend(fontsize=8)
-        ax.grid(axis="y", alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
-    plt.close()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

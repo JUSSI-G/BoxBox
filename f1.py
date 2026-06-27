@@ -594,6 +594,9 @@ def main():
         else:
             print(f"\n  ✓ Same champion: {pred_winner['driver']}")
 
+        if not args.no_plot:
+            plot_single_season(args.year, standings, year_df)
+
     else:
         years = sorted(dataset[
             dataset["year"].between(args.start, args.end)
