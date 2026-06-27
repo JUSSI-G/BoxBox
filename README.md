@@ -71,7 +71,7 @@ python f1.py --year 2010 --dataset outputs/f1_xgb_dataset.csv
 ## Pipeline
 
 ```
-analyser.py  →  xgb.py  →  f1.py
+analyser.py  ->  xgb.py  ->  f1.py
 ```
 
 | File | Role | Outputs |

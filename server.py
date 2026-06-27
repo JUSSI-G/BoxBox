@@ -227,5 +227,5 @@ if __name__ == "__main__":
     print("\n  F1 Strategy Pipeline — Web Server")
     print(f"\n  Project root: {_HERE}")
     print(f"  Outputs:      {OUTPUTS_DIR}")
-    print("\n  Open → http://localhost:5001\n")
+    print("\n  Open http://localhost:5001\n")
     app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
