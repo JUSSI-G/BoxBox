@@ -116,9 +116,8 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
             if result.empty:
                 continue
 
-            points   = float(result["points"].iloc[0])
-            driver_last = driver.split()[-1].lower()
-            round_num   = int(result["round"].iloc[0]) if "round" in result.columns else 0
+            points    = float(result["points"].iloc[0])
+            round_num = int(result["round"].iloc[0]) if "round" in result.columns else 0
             grid_key    = f"{year}_{round_num}_{driver_last}"
             grid_pos    = grid_positions.get(grid_key, 20)
 
@@ -384,7 +383,7 @@ def plot_results(importances, era_results, outputs_dir=None):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_conditions=None, start=1994, end=2010, no_plot=False, outputs_dir=None):
+def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_conditions=None, start=1994, end=2010, outputs_dir=None):
     years = list(range(start, end + 1))
 
     if outputs_dir is None:
@@ -420,7 +419,7 @@ def run(pitstops_df, ergast_results_by_year, grid_positions=None, race_condition
     # ── Championship simulation ────────────────────────────────────────────────
     try:
         from f1 import run as run_simulation
-        run_simulation(dataset, model, no_plot=no_plot, outputs_dir=outputs_dir)
+        run_simulation(dataset, model, outputs_dir=outputs_dir)
     except ImportError:
         print("  ⚠  f1.py not found — skipping championship simulation")
 

@@ -432,7 +432,7 @@ def compute_undercut_missed(window_errors):
         return window_errors
     we = window_errors.copy()
     we["missed_undercut_s"] = 0.0
-    for race, grp in we.groupby("race"):
+    for _, grp in we.groupby("race"):
         near = grp[grp["avg_window_error_laps"] <= 2]
         for idx, row in grp.iterrows():
             if row["avg_window_error_laps"] > 2 and len(near) > 0:
@@ -491,7 +491,6 @@ def main():
         race_conditions=race_conditions,
         start=args.start,
         end=args.end,
-        no_plot=args.no_plot,
         outputs_dir=OUTPUTS_DIR,
     )
 

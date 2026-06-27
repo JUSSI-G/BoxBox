@@ -190,10 +190,9 @@ def results():
     era_imp_path      = os.path.join(OUTPUTS_DIR, "f1_era_importance.json")
 
     out = {
-        "sweep":           [],
-        "dataset_rows":    0,
-        "images":          {},
-        "era_importance":  {},  
+        "sweep":          [],
+        "dataset_rows":   0,
+        "era_importance": {},
     }
 
     # ── Sweep CSV ──────────────────────────────────────────────────────────────

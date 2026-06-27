@@ -36,16 +36,7 @@ XGB_DATASET_CSV = os.path.join(OUTPUTS_DIR, "f1_xgb_dataset.csv")
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-# Must match xgb.py exactly — the model is trained on these columns
-FEATURE_COLS = [
-    "grid_position",
-    "avg_window_error_laps",
-    "window_penalty_s",
-    "exec_penalty_s",
-    "era_code",
-    "wet_race",
-    "sc_laps",
-]
+from xgb import FEATURE_COLS
 
 # Variance features zeroed for the perfect-strategy counterfactual.
 # grid_position and era_code are NOT zeroed — car quality and era are fixed.
@@ -504,7 +495,7 @@ def plot_sweep(sweep_results, dataset):
 
 # ── Public API — called from analyser.py after xgb.py trains the model ─────────
 
-def run(dataset, model, no_plot=False, outputs_dir=None):
+def run(dataset, model, outputs_dir=None):
     """Entry point called from the analyser.py pipeline."""
     if outputs_dir is None:
         outputs_dir = os.path.join(_HERE, "outputs")
