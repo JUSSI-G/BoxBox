@@ -34,6 +34,7 @@ KAGGLE_CSV   = os.path.join(DATA_DIR, "Formula1_Pitstop_Data_1950-2024_all_round
 POINTS_SYSTEMS = {
     1950: {1:8,  2:6,  3:4,  4:3,  5:2},
     1961: {1:9,  2:6,  3:4,  4:3,  5:2},
+    1991: {1:10, 2:6,  3:4,  4:3,  5:2,  6:1},
     2003: {1:10, 2:8,  3:6,  4:5,  5:4,  6:3,  7:2,  8:1},
     2010: {1:25, 2:18, 3:15, 4:12, 5:10, 6:8,  7:6,  8:4,  9:2, 10:1},
 }
@@ -319,6 +320,7 @@ def load_kaggle_csv(path=KAGGLE_CSV):
             pit_rows.append({
                 "Year":       year,
                 "Race":       circuit,
+                "Round":      int(row["Round"]),
                 "DriverName": driver,
                 "Lap":        int(lap),
                 "Time":       float(time),
@@ -344,7 +346,13 @@ def combine_pitstops(old_df, new_df):
         return new_df
     if new_df.empty:
         return old_df
+    old_df = old_df.copy()
+    k = pd.read_csv(KAGGLE_CSV)
+    nrounds = k.groupby("Season")["Round"].max()
+    base = old_df.groupby("Year")["RaceId"].transform("max") - old_df["Year"].map(nrounds)
+    old_df["Round"] = (old_df["RaceId"] - base).astype(int)
     combined = pd.concat([old_df, new_df], ignore_index=True)
+    combined["Race"] = combined["Race"].astype(str) + "|" + combined["Round"].astype(int).astype(str)
     print(f"  ✓ Combined pit stops: {len(combined)} records "
           f"({combined['Year'].min()}–{combined['Year'].max()})")
     return combined
@@ -392,7 +400,7 @@ def compute_pit_window_errors(pitstops_df, year, race_laps=None):
         grp         = grp.sort_values("Lap")
         actual_laps = grp["Lap"].tolist()
         n_stops     = len(actual_laps)
-        race_key    = race.lower().strip()
+        race_key    = race.split("|")[-1]
         total_laps  = (race_laps or {}).get(race_key) or TYPICAL_RACE_LAPS.get(year, 60)
         opt         = optimal_pit_laps(n_stops, total_laps, deg_rate)
         errors      = [abs(a - o) for a, o in zip(actual_laps, opt)]

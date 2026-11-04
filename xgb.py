@@ -65,11 +65,7 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
             print(f"    ⚠  No Ergast data for {year}")
             continue
 
-        race_laps = {}
-        if "circuit" in year_results.columns and "laps" in year_results.columns:
-            for _, row in year_results.drop_duplicates("circuit").iterrows():
-                if pd.notna(row["laps"]) and int(row["laps"]) > 0:
-                    race_laps[str(row["circuit"]).lower().strip()] = int(row["laps"])
+        race_laps = {str(r): int(l) for r, l in year_results.groupby("round")["laps"].max().items() if l > 0}
 
         window_errors  = compute_pit_window_errors(pitstops_df, year, race_laps=race_laps)
         window_errors  = compute_undercut_missed(window_errors)
@@ -93,18 +89,23 @@ def build_dataset(pitstops_df, ergast_results, years, grid_positions=None, race_
             exec_pen = float(ep["exec_penalty_s"].iloc[0]) if not ep.empty else 0.0
 
             driver_last = driver.split()[-1].lower()
-            result = year_results[
-                year_results["driver_name"].str.lower().str.contains(driver_last, na=False)
-            ]
+            race_name, round_num = race.rsplit("|", 1)
+            round_num = int(round_num)
+            rr = year_results[year_results["round"] == round_num]
+            names = rr["driver_name"].str.lower()
+            result = rr[names == driver.lower()]
+            if result.empty:
+                cand = rr[names.str.contains(driver_last, na=False)]
+                if cand["driver_name"].nunique() == 1:
+                    result = cand
             if result.empty:
                 continue
 
             points    = float(result["points"].iloc[0])
-            round_num = int(result["round"].iloc[0]) if "round" in result.columns else 0
             grid_key    = f"{year}_{round_num}_{driver_last}"
             grid_pos    = grid_positions.get(grid_key, 20)
 
-            circuit_key = race.lower().replace(" ", "_")
+            circuit_key = race_name.lower().replace(" ", "_")
             year_conds  = race_conditions.get(year, {})
             cond = year_conds.get(circuit_key)
             if cond is None:
