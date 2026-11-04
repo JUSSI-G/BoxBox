@@ -2,8 +2,6 @@
 
 An F1 strategy analysis tool that goes through 30 years of pit stops and tries to answer one question: has software made strategy mistakes matter less in Formula One?
 
-![BoxBox dashboard](docs/img/dashboard.png)
-
 ## Background
 
 An earlier version of this project ([`thesis-2026`](https://github.com/JUSSI-G/BoxBox/tree/thesis-2026)) was the practical part of my bachelor's thesis, *The Impact of Software Engineering on Strategy Development in Formula One* (LUT University, 2026). Since then I have kept building on it as a passion project.
@@ -49,6 +47,15 @@ In **3 of 31 seasons** the model's champion changes when strategy errors are rem
 | 1994 | Michael Schumacher | Damon Hill |
 | 2014 | Lewis Hamilton | Nico Rosberg |
 | 2021 | Max Verstappen | Lewis Hamilton |
+
+How you count the changes matters a lot here:
+
+| Counting method | Seasons |
+|---|---|
+| Perfect-strategy champion is different from the real champion | 11 / 31 |
+| Model gets the real champion right, and perfect strategy alone changes it | 3 / 31 |
+
+The first way looks more dramatic, but it also counts seasons where the model already picked the wrong champion with the drivers' real strategy. In those seasons the change says more about the model than about strategy. That's why I only count the second one. The dashboard still shows the first count, and fixing that is on my to-do list.
 
 These should be read as illustrative estimates only. The simulation removes everyone's strategy errors at the same time and keeps everything else fixed. In a real race, a better strategy from one team would make the others react, so the race would play out differently.
 
