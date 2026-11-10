@@ -1,0 +1,356 @@
+/* Windows 95 style. Colours from the classic 16-colour palette. */
+
+:root {
+  --face: #c0c0c0;
+  --light: #ffffff;
+  --shadow: #808080;
+  --dark: #000000;
+  --hilight: #dfdfdf;
+  --navy: #000080;
+  --maroon: #800000;
+  --green: #008000;
+  --teal: #008080;
+  --text: #000000;
+  --ui: Tahoma, Verdana, "Segoe UI", Geneva, sans-serif;
+  --num: "Lucida Console", "Courier New", monospace;
+
+  /* Bevels */
+  --raised: inset -1px -1px var(--dark), inset 1px 1px var(--light), inset -2px -2px var(--shadow), inset 2px 2px var(--hilight);
+  --sunken: inset -1px -1px var(--light), inset 1px 1px var(--shadow), inset -2px -2px var(--hilight), inset 2px 2px var(--dark);
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--teal);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 16px;
+}
+
+/* Inside the portfolio iframe: no desktop, no margins */
+html.embedded body { background: var(--face); padding: 0; }
+html.embedded .window { max-width: none; box-shadow: none; }
+
+a { color: var(--navy); }
+
+/* ── Window ───────────────────────────────────────────── */
+
+.window {
+  max-width: 1120px;
+  margin: 0 auto;
+  background: var(--face);
+  box-shadow: var(--raised);
+  padding: 3px;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--navy);
+  color: #fff;
+  font-weight: bold;
+  padding: 3px 4px;
+  user-select: none;
+}
+
+.title-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  background:
+    linear-gradient(var(--maroon), var(--maroon)) 2px 9px / 3px 5px no-repeat,
+    linear-gradient(var(--light), var(--light)) 6px 5px / 3px 9px no-repeat,
+    linear-gradient(#00ff00, #00ff00) 10px 2px / 3px 12px no-repeat,
+    var(--face);
+}
+
+.window-body { padding: 8px; }
+
+/* ── Group boxes ──────────────────────────────────────── */
+
+.group {
+  margin: 0 0 10px;
+  padding: 10px 10px 8px;
+  border: 1px solid var(--shadow);
+  box-shadow: 1px 1px 0 var(--light), inset 1px 1px 0 var(--light);
+  min-width: 0;
+}
+
+.group legend { padding: 0 3px; }
+
+.sunken { background: #fff; box-shadow: var(--sunken); padding: 2px; }
+
+.hint { color: #333; margin: 6px 0 0; font-size: 12px; }
+.intro { margin: 4px 0 10px; max-width: 760px; }
+
+/* ── Summary ──────────────────────────────────────────── */
+
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+
+.kpi { min-width: 0; }
+.kpi-v {
+  background: #fff;
+  box-shadow: var(--sunken);
+  padding: 5px 8px;
+  font-family: var(--num);
+  font-size: 20px;
+  line-height: 1.2;
+}
+.kpi-v.select { background: var(--navy); color: #fff; }
+.kpi-l { font-size: 12px; margin-top: 4px; }
+
+/* ── Buttons ──────────────────────────────────────────── */
+
+.btn, .era-nav button, .timeline button {
+  font: inherit;
+  color: var(--text);
+  background: var(--face);
+  border: none;
+  box-shadow: var(--raised);
+  padding: 4px 10px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.btn:active:not(:disabled), .era-nav button:active, .timeline button:active,
+.era-nav button.active, .timeline button.active {
+  box-shadow: var(--sunken);
+}
+
+.era-nav button.active, .timeline button.active { background: #d4d4d4; }
+
+.btn:disabled { color: var(--shadow); text-shadow: 1px 1px 0 var(--light); cursor: default; }
+
+button:focus-visible, select:focus-visible, input:focus-visible + span {
+  outline: 1px dotted var(--dark);
+  outline-offset: -4px;
+}
+
+/* ── Dropdown ─────────────────────────────────────────── */
+
+select {
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+  border: none;
+  box-shadow: var(--sunken);
+  padding: 3px 26px 3px 6px;
+  min-height: 24px;
+  appearance: none;
+  border-radius: 0;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--dark) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--dark) 50%),
+    linear-gradient(var(--face), var(--face));
+  background-size: 4px 4px, 4px 4px, 16px calc(100% - 4px);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%, calc(100% - 2px) 2px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* ── Radio buttons ────────────────────────────────────── */
+
+.radio { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0; cursor: pointer; }
+
+.radio input {
+  appearance: none;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 2px 0 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--sunken);
+  cursor: pointer;
+}
+
+.radio input:checked {
+  background: radial-gradient(circle, var(--dark) 0 2px, #fff 2.5px);
+}
+
+/* ── Tabs ─────────────────────────────────────────────── */
+
+.tabs { display: flex; position: relative; z-index: 1; padding-left: 2px; }
+
+.tabs button {
+  font: inherit;
+  color: var(--text);
+  background: var(--face);
+  border: none;
+  padding: 4px 14px 3px;
+  margin-right: -1px;
+  cursor: pointer;
+  box-shadow: inset 1px 1px var(--light), inset -1px 0 var(--dark), inset -2px 0 var(--shadow), inset 2px 2px var(--hilight);
+  position: relative;
+  top: 2px;
+}
+
+.tabs button[aria-selected="true"] {
+  top: 0;
+  padding: 6px 16px 5px;
+  margin: 0 -2px 0 -2px;
+  z-index: 2;
+}
+
+.tab-panel {
+  display: none;
+  padding: 10px;
+  box-shadow: var(--raised);
+  margin-bottom: 4px;
+}
+
+.tab-panel.active { display: block; }
+
+/* ── Charts ───────────────────────────────────────────── */
+
+.chart-box { position: relative; height: 340px; min-width: 0; }
+.chart-box.tall { height: 380px; }
+.chart-box canvas { display: block; }
+
+/* ── Eras ─────────────────────────────────────────────── */
+
+.era-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+
+.era-detail { margin: 0; }
+.era-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.era-head b { font-size: 15px; }
+.ratio-field { display: inline-block; margin: 8px 0 4px; }
+.ratio-field .kpi-v { display: inline-block; font-size: 22px; padding: 4px 12px; color: var(--green); }
+
+.feat-list { display: grid; gap: 5px; margin-top: 10px; }
+.feat { display: grid; grid-template-columns: 118px minmax(0, 1fr) 46px; align-items: center; gap: 8px; font-size: 12px; }
+.feat-bar { height: 12px; background: #fff; box-shadow: var(--sunken); padding: 2px; }
+.feat-bar div { height: 100%; }
+.feat .num { text-align: right; }
+
+.era-nav { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+.era-nav button { padding: 3px 8px; font-size: 12px; }
+
+/* ── Seasons ──────────────────────────────────────────── */
+
+.season-controls { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; }
+.season-controls .group { margin-bottom: 8px; }
+
+.season-pick { display: flex; gap: 4px; }
+.season-pick select { flex: 1; min-width: 0; }
+
+.mark { color: var(--maroon); font-weight: bold; }
+
+.timeline { display: grid; grid-template-columns: repeat(31, minmax(0, 1fr)); gap: 2px; margin: 2px 0 10px; }
+.timeline button { padding: 4px 0; font-family: var(--num); font-size: 12px; min-height: 26px; }
+.timeline button.hl { color: var(--maroon); font-weight: bold; }
+
+.season-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 10px; align-items: start; }
+.season-layout > * { min-width: 0; }
+
+.season-card { margin: 0; }
+.season-card legend { font-weight: bold; }
+
+.champs { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; }
+.champs .field { background: #fff; box-shadow: var(--sunken); padding: 3px 6px; overflow-wrap: anywhere; }
+.champs .field.changed { background: var(--navy); color: #fff; }
+.champs .field.off { color: var(--shadow); }
+
+.verdict {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0 8px;
+  padding: 8px;
+  background: #ffffe1;
+  border: 1px solid var(--dark);
+}
+.verdict-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: bold;
+  font-family: "Times New Roman", serif;
+  color: #fff;
+  background: var(--navy);
+}
+.verdict.changed .verdict-icon { background: var(--maroon); }
+.verdict.ok .verdict-icon { background: var(--green); }
+
+.season-stat { font-size: 12px; }
+.season-stat b { font-family: var(--num); font-weight: normal; }
+
+/* ── List view ────────────────────────────────────────── */
+
+.listview { margin-top: 10px; overflow-x: auto; max-height: 420px; overflow-y: auto; }
+
+.listview table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+
+.listview th {
+  position: sticky;
+  top: 0;
+  background: var(--face);
+  box-shadow: var(--raised);
+  font-weight: normal;
+  text-align: left;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.listview td { padding: 2px 8px; white-space: nowrap; }
+.listview tbody tr:hover td { background: #e8e8e8; }
+.listview tr.lead td { background: var(--navy); color: #fff; }
+.listview tr.lead td .tag { color: #fff; border-color: #fff; }
+
+.num { text-align: right; font-family: var(--num); }
+.listview th.num { font-family: var(--ui); }
+
+.tag {
+  font-size: 11px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  padding: 0 4px;
+  margin-left: 6px;
+}
+
+.pos, .up { color: var(--green); }
+.neg, .down { color: #ff0000; }
+.listview tr.lead .pos, .listview tr.lead .up { color: #00ff00; }
+.listview tr.lead .neg, .listview tr.lead .down { color: #ff8080; }
+.dim { color: var(--shadow); }
+.listview tr.lead .dim { color: #c0c0c0; }
+
+.note { max-width: 760px; }
+
+/* ── Status bar ───────────────────────────────────────── */
+
+.statusbar { display: flex; gap: 2px; margin-top: 2px; }
+.status-field { box-shadow: inset -1px -1px var(--light), inset 1px 1px var(--shadow); padding: 2px 6px; font-size: 12px; white-space: nowrap; }
+.status-field.grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+.error { background: #fff; border: 1px solid var(--dark); padding: 8px; color: var(--maroon); margin-bottom: 10px; }
+
+/* ── Smaller screens ──────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi:last-child { grid-column: span 2; }
+  .era-layout, .season-layout, .season-controls { grid-template-columns: minmax(0, 1fr); }
+  .timeline { grid-template-columns: repeat(11, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  body { padding: 0; }
+  .window-body { padding: 6px; }
+  .tab-panel { padding: 8px 6px; }
+  .chart-box { height: 290px; }
+  .chart-box.tall { height: 340px; }
+  .timeline { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .kpi-v { font-size: 17px; }
+  .feat { grid-template-columns: 104px minmax(0, 1fr) 42px; }
+  .tabs button { padding: 4px 10px 3px; }
+  .tabs button[aria-selected="true"] { padding: 6px 12px 5px; }
+}

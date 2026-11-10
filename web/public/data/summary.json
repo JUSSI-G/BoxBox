@@ -1,0 +1,55 @@
+{
+ "seasons": 31,
+ "driver_races": 10317,
+ "test_r2": 0.394,
+ "ratio_first": 0.8554,
+ "ratio_last": 0.317,
+ "strategy_changes": [
+  1994,
+  2014,
+  2021
+ ],
+ "differs_from_real": [
+  1994,
+  1995,
+  1998,
+  1999,
+  2000,
+  2004,
+  2007,
+  2009,
+  2014,
+  2021,
+  2024
+ ],
+ "feature_importances": [
+  {
+   "feature": "Grid position",
+   "importance": 0.39
+  },
+  {
+   "feature": "Era",
+   "importance": 0.298
+  },
+  {
+   "feature": "Execution penalty",
+   "importance": 0.121
+  },
+  {
+   "feature": "Window penalty",
+   "importance": 0.07
+  },
+  {
+   "feature": "Pit window error",
+   "importance": 0.066
+  },
+  {
+   "feature": "Wet race",
+   "importance": 0.056
+  },
+  {
+   "feature": "Safety car laps",
+   "importance": 0.0
+  }
+ ]
+}

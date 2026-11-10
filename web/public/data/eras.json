@@ -1,0 +1,92 @@
+[
+ {
+  "name": "Pre-software",
+  "start": 1994,
+  "end": 1999,
+  "rows": 1554,
+  "strategy": 0.4016,
+  "grid": 0.4695,
+  "ratio": 0.8554,
+  "features": {
+   "Grid position": 0.4695,
+   "Pit window error": 0.1045,
+   "Window penalty": 0.1558,
+   "Execution penalty": 0.1413,
+   "Era": 0.0,
+   "Wet race": 0.1289,
+   "Safety car laps": 0.0
+  }
+ },
+ {
+  "name": "Early tools",
+  "start": 2000,
+  "end": 2005,
+  "rows": 1704,
+  "strategy": 0.3907,
+  "grid": 0.523,
+  "ratio": 0.7471,
+  "features": {
+   "Grid position": 0.523,
+   "Pit window error": 0.1094,
+   "Window penalty": 0.1321,
+   "Execution penalty": 0.1492,
+   "Era": 0.0,
+   "Wet race": 0.0862,
+   "Safety car laps": 0.0
+  }
+ },
+ {
+  "name": "Full analytics",
+  "start": 2006,
+  "end": 2011,
+  "rows": 2020,
+  "strategy": 0.3494,
+  "grid": 0.5654,
+  "ratio": 0.6179,
+  "features": {
+   "Grid position": 0.5654,
+   "Pit window error": 0.0865,
+   "Window penalty": 0.0855,
+   "Execution penalty": 0.1774,
+   "Era": 0.0,
+   "Wet race": 0.0852,
+   "Safety car laps": 0.0
+  }
+ },
+ {
+  "name": "Predictive models",
+  "start": 2012,
+  "end": 2017,
+  "rows": 2326,
+  "strategy": 0.2685,
+  "grid": 0.6775,
+  "ratio": 0.3963,
+  "features": {
+   "Grid position": 0.6775,
+   "Pit window error": 0.064,
+   "Window penalty": 0.0792,
+   "Execution penalty": 0.1252,
+   "Era": 0.0,
+   "Wet race": 0.054,
+   "Safety car laps": 0.0
+  }
+ },
+ {
+  "name": "AI / Monte Carlo",
+  "start": 2018,
+  "end": 2024,
+  "rows": 2713,
+  "strategy": 0.2137,
+  "grid": 0.6741,
+  "ratio": 0.317,
+  "features": {
+   "Grid position": 0.6741,
+   "Pit window error": 0.0529,
+   "Window penalty": 0.0577,
+   "Execution penalty": 0.1031,
+   "Era": 0.0,
+   "Wet race": 0.0573,
+   "Safety car laps": 0.0549
+  }
+ }
+]

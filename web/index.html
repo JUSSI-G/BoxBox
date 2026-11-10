@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BoxBox Results Explorer</title>
+  <meta name="description" content="30 years of Formula One pit stops: how much did strategy decide the championship?" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect width='16' height='16' fill='%23c0c0c0'/><rect x='2' y='9' width='3' height='5' fill='%23800000'/><rect x='6' y='5' width='3' height='9' fill='%23000080'/><rect x='10' y='2' width='3' height='12' fill='%23008000'/></svg>" />
+</head>
+<body>
+  <div class="window" id="app">
+    <div class="titlebar">
+      <span class="title-icon" aria-hidden="true"></span>
+      <span class="title-text">BoxBox - Results Explorer</span>
+    </div>
+
+    <div class="window-body">
+      <fieldset class="group">
+        <legend>Summary</legend>
+        <div class="kpis" id="kpis"></div>
+      </fieldset>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-eras" data-tab="eras" aria-controls="panel-eras">Software eras</button>
+        <button role="tab" id="tab-seasons" data-tab="seasons" aria-controls="panel-seasons">Season explorer</button>
+      </div>
+
+      <div class="tab-panel" id="panel-eras" role="tabpanel" aria-labelledby="tab-eras">
+        <p class="intro">
+          A separate model is trained for each software era. The bars show how much the strategy features and grid
+          position matter to the model, and the line shows the ratio between them. Click an era to see all the features.
+        </p>
+        <div class="era-layout">
+          <div class="sunken chart-box"><canvas id="eraChart" aria-label="Strategy and grid importance by era"></canvas></div>
+          <fieldset class="group era-detail" id="eraDetail"></fieldset>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-seasons" role="tabpanel" aria-labelledby="tab-seasons">
+        <div class="season-controls">
+          <fieldset class="group">
+            <legend>Count title changes</legend>
+            <label class="radio"><input type="radio" name="mode" value="strategy" checked /> <span>Changed by strategy alone (<b id="countStrategy"></b>)</span></label>
+            <label class="radio"><input type="radio" name="mode" value="real" /> <span>Differs from real champion (<b id="countReal"></b>)</span></label>
+            <p class="hint" id="modeNote"></p>
+          </fieldset>
+          <fieldset class="group">
+            <legend>Season</legend>
+            <div class="season-pick">
+              <button class="btn" id="prevSeason" aria-label="Previous season">&lt;</button>
+              <select id="seasonSelect" aria-label="Season"></select>
+              <button class="btn" id="nextSeason" aria-label="Next season">&gt;</button>
+            </div>
+            <p class="hint"><span class="mark">*</span> = the champion changes with perfect strategy</p>
+          </fieldset>
+        </div>
+
+        <div class="timeline" id="timeline"></div>
+
+        <div class="season-layout">
+          <fieldset class="group season-card" id="seasonCard"></fieldset>
+          <div class="sunken chart-box tall"><canvas id="standingsChart" aria-label="Top 10 drivers, model points"></canvas></div>
+        </div>
+
+        <div class="sunken listview">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Driver</th><th class="num">Races</th>
+                <th class="num">Real strategy</th><th class="num">Perfect strategy</th>
+                <th class="num">Gain</th><th class="num">Rank</th>
+              </tr>
+            </thead>
+            <tbody id="standingsBody"></tbody>
+          </table>
+        </div>
+        <p class="hint note">
+          Points are the model's predictions, summed over the races that have pit stop data. They won't match the real
+          championship totals, so they are only for comparing real and perfect strategy against each other. The real
+          champion comes from the official results.
+        </p>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <div class="status-field grow" id="statusText">Loading...</div>
+      <div class="status-field"><a href="https://github.com/JUSSI-G/BoxBox" target="_blank" rel="noopener">Source on GitHub</a></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
